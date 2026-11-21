@@ -1,4 +1,4 @@
-# Render Blueprint for the FastAPI backend. Vercel serves the frontend and proxies /api here.
+# Render Blueprint for the FastAPI backend and the static frontend (which rewrites /api to the backend).
 services:
   - type: web
     name: boundless-boston-api
