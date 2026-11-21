@@ -67,9 +67,10 @@ stylesheet URL in `mount.js` to a hosted copy of the same version.
 Internet access and WebGL are required. Allow OpenFreeMap tiles, its style resources,
 MapLibre workers (`blob:`), and the CSS CDN in the host CSP. Keep the map attribution.
 
-## Branch integration
+## App integration
 
-`college-atlas` starts from the available `origin/main` snapshot. Its feature commit
-only adds this directory. PR this branch into the teammate's UI branch when ready,
-or cherry-pick its feature commit. The target branch owns dependency/lockfile updates
-and adding its tab. No deployment or shared app-shell integration is included.
+Open College Atlas in the navigation or visit /#atlas. The app lazy-loads the installed MapLibre module and keeps venue results on the planner view. Campus search and selection remain available when WebGL cannot initialize. Returning to Plan unmounts the map and frees its observers and WebGL resources.
+
+Campus callbacks also receive null when River view clears the selection.
+
+Validation: pnpm typecheck, pnpm build, and pnpm e2e. The Atlas browser tests cover fallback, search, selection, responsive layout and remount cleanup with WebGL disabled, plus map initialization and perspective controls with WebGL enabled and a deterministic style fixture. Live tile availability is not asserted.

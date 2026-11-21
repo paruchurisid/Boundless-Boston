@@ -199,6 +199,8 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 ### Product / UX
 
+- College Atlas: separate lazy-loaded view at `/#atlas`, 19 searchable campus centers, 3D building map, 2D toggle, river overview, and a searchable directory fallback without WebGL. Map data requires internet; venue results are not displayed in the Atlas.
+
 - Saved places: heart toggle persists in browser `localStorage`; Saved panel lists/unsaves; categories feed taste tags.
 - Partly done: TikTok Connect UI + taste chips: demo path works locally; real account connect needs deployed callback, Render TikTok env vars, and TikTok Sandbox/Live setup.
 
