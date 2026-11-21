@@ -185,3 +185,5 @@ footer span:last-child{display:flex;gap:6px;align-items:center}
 .atlas-view h1 {font-size:clamp(40px,6vw,72px);margin:12px 0}
 .atlas-view>div:last-child {height:75vh!important;min-height:600px!important;border:2px solid var(--ink);border-radius:16px;overflow:hidden}
 @media(max-width:600px){.topbar{gap:12px}.stop-label{font-size:12px}.atlas-view>div:last-child{min-height:680px!important}}
+.event-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-top:10px;font-size:11px}
+.event-label{font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:9px}

@@ -1,6 +1,6 @@
 import { lazy, Suspense, StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowDownRight, ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, CloudRain, Crosshair, Footprints, Heart, MapPin, Moon, SlidersHorizontal, Sparkles, TrainFront, Utensils, X } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, Bookmark, ChevronDown, ChevronRight, CloudRain, Compass, Crosshair, Footprints, Heart, MapPin, Moon, SlidersHorizontal, Sparkles, TrainFront, Utensils, X } from 'lucide-react';
 import type React from 'react';
 import '@fontsource/akshar/latin-500.css';
 import '@fontsource/akshar/latin-600.css';
@@ -65,6 +65,12 @@ function HeroDoodle(){
   <g transform="translate(230 166)"><path d="M14 4 L22 -4 L30 4" fill="none" stroke={INK} strokeWidth="2.5"/><rect x="0" y="4" width="62" height="44" rx="10" fill="#f4f3ee" stroke={INK} strokeWidth="2.5"/><rect x="0" y="30" width="62" height="9" fill="#00843D" stroke={INK} strokeWidth="2.5"/><rect x="7" y="11" width="13" height="12" rx="3" fill={INK}/><rect x="25" y="11" width="13" height="12" rx="3" fill={INK}/><rect x="43" y="11" width="13" height="12" rx="3" fill={INK}/><circle cx="14" cy="52" r="5" fill="#fff" stroke={INK} strokeWidth="2.5"/><circle cx="48" cy="52" r="5" fill="#fff" stroke={INK} strokeWidth="2.5"/></g>
   <path d="M200 196 h-14 M204 206 h-24 M198 186 h-8" stroke={INK} strokeWidth="2.5" strokeLinecap="round"/>
  </svg>;
+}
+// Games counted in the events score, shown on the card so the ranking signal is visible.
+function GameRow({r}:{r:Rec}){
+ const games=(r.score.components.events?.raw?.games as string[]|undefined)??[];
+ if(!games.length) return null;
+ return <div className="event-row"><span className="event-label">Game nearby:</span>{games.map(g=><span key={g}>{g}</span>)}</div>;
 }
 function TransitRow({r}:{r:Rec}){
  const out=r.reachability.outbound, last=r.reachability.last_return;
@@ -203,7 +209,7 @@ function App(){
     <div className="sign-band venue-band" style={{background:band,color:dark?'#141414':'#fff'}}><div><div className="tags"><span>{String(i+1).padStart(2,'0')}</span><span>{r.venue.categories[0]?.replace('_',' ')||'local favorite'}</span><span>{'$'.repeat(r.venue.price_level||1)}</span></div><h3>{r.venue.name}</h3></div>{line?<Trolley color={line.color} size={52}/>:<Steps/>}</div>
     <div className="sign-body"><div className="venue-top"><p className="venue-address">{r.venue.address}</p><button className="heart" aria-label={`Save ${r.venue.name}`}><Heart size={18} strokeWidth={2.5}/></button></div>
     <div className="venue-stats"><span><span className="star">★</span> {r.venue.rating?.toFixed(1)||'—'} <small>({r.venue.review_count?.toLocaleString()||'—'})</small></span><span><MapPin size={13} strokeWidth={2.5}/> {line&&r.reachability.total_min!=null?`${r.reachability.total_min} min by T`:`${r.venue.walk_min} min walk${r.venue.walk_estimate?.label==='approx.'?' (approx.)':''}`}</span><span><TrainFront size={14} strokeWidth={2.5}/> {r.reachability.method==='predicted_round_trip'?'Live round trip':r.reachability.method==='scheduled_round_trip'?'Scheduled round trip':r.reachability.method==='walking_fallback'?'On foot':'Transit check'}</span><span className="open-status">OPEN</span></div>
-    <TransitRow r={r}/>
+    <TransitRow r={r}/><GameRow r={r}/>
     <div className="score-row"><div className="score"><strong>{Math.round(r.score.value*100)}</strong><small>FIT</small></div><div className="score-track"><div style={{width:`${Math.round(r.score.value*100)}%`}}/></div><button className="why-button" onClick={()=>toggleWhy(r)}>Why this? <ChevronDown size={14} strokeWidth={2.5}/></button></div>{expanded===r.venue.id&&<div className="breakdown"><p>{whys[whyKey(r)]||r.explanation}{whys[whyKey(r)]&&<small> · AI summary from the facts below</small>}</p><p>{r.reach_explanation}</p>{Object.entries(r.score.components).map(([name,c])=><div className="component" key={name}><span>{name}<small>{c.missing_reason?` · not used (${c.missing_reason})`:c.label==='approx.'?' · approx.':c.label==='demo'?' · demo':''}</small></span><div><i style={{width:`${Math.round(c.value*100)}%`}}/></div><b>{Math.round(c.value*100)}<small> × {c.weight.toFixed(2)}</small></b></div>)}</div>}
     <div className="attribution" translate="no">{(r.venue.attributions||[]).map((a,i)=><span key={`${a.source}-${i}`}>{a.url?<a href={a.url} target="_blank" rel="noreferrer">{a.text}</a>:a.text}{i<(r.venue.attributions.length-1)?' · ':''}</span>)}</div></div></article>})}</section>
    <aside className="map-column"><button className="neighborhood sketch" onClick={showDetails}><span className="neighborhood-icon"><Utensils size={18} strokeWidth={2.5}/></span><span><small>GET TO KNOW THE BLOCK</small><b>Neighborhood notes</b></span><ChevronRight size={18} strokeWidth={2.5}/></button><div className="legend sketch"><span className="section-kicker">T LINE COLORS</span>{[['Red Line','#DA291C'],['Orange Line','#ED8B00'],['Green Line','#00843D'],['Blue Line','#003DA5'],['Silver Line','#7C878E'],['Bus','#FFC72C']].map(([n,c])=><div key={n} className="legend-row"><i style={{background:c}}/>{n}</div>)}</div></aside></div>
