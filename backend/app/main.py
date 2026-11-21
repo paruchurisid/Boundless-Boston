@@ -159,7 +159,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
                 await asyncio.sleep(random.uniform(0.1, 0.4))
                 continue
             break
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError, ValueError):
+        except (httpx.TransportError, ValueError):  # TransportError covers timeouts, connect, protocol and proxy errors
             if attempt == 0:
                 await asyncio.sleep(random.uniform(0.1, 0.4))
                 continue
