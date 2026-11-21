@@ -38,6 +38,7 @@ HALF_OPEN_PROBES: set[str] = set()
 TTL = {"google_places": 300, "mbta": 60, "nws": 600, "boston_ckan": 3600}
 CKAN_BASE = os.getenv("BOSTON_CKAN_URL", "https://data.boston.gov/api/3/action")
 MBTA_BASE = "https://api-v3.mbta.com"
+TICKETMASTER_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
 CKAN_RESOURCES: dict[str, dict[str, Any]] = {}
 CKAN_RESOLVED_AT = 0.0
 
@@ -87,6 +88,7 @@ def source_use(source: str, status: str | None = None) -> dict[str, Any]:
         "mbta": [{"source": source, "text": "MBTA V3 API", "url": "https://api-v3.mbta.com/"}],
         "nws": [{"source": source, "text": "Weather data by the National Weather Service", "url": "https://www.weather.gov/"}],
         "boston_ckan": [{"source": source, "text": "City of Boston Open Data", "url": "https://data.boston.gov/"}],
+        "ticketmaster": [{"source": source, "text": "Event data by Ticketmaster", "url": "https://www.ticketmaster.com/"}],
     }
     return {"source": source, "status": status or h["status"], "observed_at": h["last_success_at"], "cache_age_s": h["cache_age_s"], "attribution": attributions.get(source, [])}
 def envelope(data: dict[str, Any], used: list[str]) -> dict[str, Any]:
@@ -209,10 +211,10 @@ def score_venue(v: dict[str,Any], median: float, weather: dict[str,Any], reach: 
     reviews=v.get("review_count") or 0; rating=v.get("rating")
     quality=.5 if rating is None else (((reviews/(reviews+50))*rating+(50/(reviews+50))*median)/5 if reviews+50 else rating/5)
     reach_value=float(reach.get("reach_value", 0.0))
-    events=0.0
+    nearby=v.get("nearby_events"); events=0.0 if nearby is None else min(1.0, nearby/3)
     adverse=(weather.get("precipitation_chance_pct") or 0)>=50 or (weather.get("temperature_f") is not None and weather["temperature_f"]<40)
     mood=1.0 if (adverse and v["indoor_outdoor"]=="indoor") else (0.0 if adverse and v["indoor_outdoor"]=="outdoor" else .5)
-    components={"momentum":{"value":momentum,"weight":.3,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},"quality":{"value":quality,"weight":.3,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":50,"prior_rating":median},"sources":["google_places"]},"reach":{"value":reach_value,"weight":.2,"raw":reach,"sources":["mbta"]},"events":{"value":events,"weight":.1,"raw":{"nearby_events":None},"sources":["ticketmaster"],"missing_reason":"Tier 2 not configured"},"weather":{"value":mood,"weight":.1,"raw":weather,"sources":["nws"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_chance_pct") is None else None}}
+    components={"momentum":{"value":momentum,"weight":.3,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},"quality":{"value":quality,"weight":.3,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":50,"prior_rating":median},"sources":["google_places"]},"reach":{"value":reach_value,"weight":.2,"raw":reach,"sources":["mbta"]},"events":{"value":events,"weight":.1,"raw":{"nearby_events":nearby,"radius_m":804.672,"horizon_hours":3},"sources":["ticketmaster"],"missing_reason":"event data unavailable" if nearby is None else None},"weather":{"value":mood,"weight":.1,"raw":weather,"sources":["nws"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_chance_pct") is None else None}}
     total=sum(c["value"]*c["weight"] for c in components.values())
     return {"value":round(total,4),"components":components}
 
@@ -641,6 +643,38 @@ async def live_neighborhood(lat: float, lng: float, radius_m: int) -> dict[str, 
                                "business_licenses": "available" if licenses is not None else "unavailable"},
             "city_contacts": contact}
 
+def parse_event_points(data: dict[str, Any] | None, start: datetime, end: datetime) -> list[tuple[float, float]]:
+    """Venue coordinates of Ticketmaster events starting in [start, end)."""
+    points = []
+    for event in (data or {}).get("_embedded", {}).get("events", []):
+        try:
+            begins = datetime.fromisoformat(event["dates"]["start"]["dateTime"].replace("Z", "+00:00"))
+            loc = event["_embedded"]["venues"][0]["location"]
+            point = (float(loc["latitude"]), float(loc["longitude"]))
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue  # TBA times or venues without coordinates can't be placed
+        if start <= begins < end:
+            points.append(point)
+    return points
+
+async def nearby_events(q: QueryInput) -> list[tuple[float, float]] | None:
+    """Event points around the query for the next 3 hours; None means unknown, never zero events."""
+    key = os.getenv("TICKETMASTER_API_KEY")
+    if DEMO:
+        HEALTH["ticketmaster"].update(status="demo", detail="No demo event fixtures; events component neutral")
+        return None
+    if not key:
+        HEALTH["ticketmaster"].update(status="disabled", detail="TICKETMASTER_API_KEY is not configured")
+        return None
+    start = q.time.astimezone(timezone.utc).replace(microsecond=0)
+    end = start + timedelta(hours=3)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    # 4 miles covers the 5 km Places search plus the 0.5 mi event radius around each venue.
+    params = {"apikey": key, "latlong": f"{round(q.lat, 3)},{round(q.lng, 3)}", "radius": 4, "unit": "miles",
+              "startDateTime": start.strftime(fmt), "endDateTime": end.strftime(fmt), "size": 200, "sort": "date,asc"}
+    data = await request_json("ticketmaster", TICKETMASTER_URL, params)
+    return None if data is None else parse_event_points(data, start, end)
+
 NWS_BASE = "https://api.weather.gov"
 # NWS requires an identifying User-Agent; the repo URL is the contact.
 NWS_HEADERS = {"User-Agent": "BoundlessBostonNavigator (https://github.com/paruchurisid/Boundless-Boston)", "Accept": "application/geo+json"}
@@ -685,7 +719,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     parsed=parse_free_text(q.free_text)
     budget=parsed.get("budget",q.budget); walk=parsed.get("max_walk_min",q.max_walk_min)
     places,_=await live_candidates(q)
-    weather=await forecast_for_query(q)
+    weather,events=await asyncio.gather(forecast_for_query(q),nearby_events(q))
     max_price={"$":1,"$$":2,"$$$":3}[budget]
     pre_candidates=[]
     for venue in places:
@@ -715,12 +749,13 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     candidates=[]
     for v,reach in eligible:
         v["walk_estimate"]={"minutes":v["walk_min"],"method":v.get("walk_method","fixture_estimate"),"label":"approx." if v.get("walk_method") else None}
+        v["nearby_events"]=None if events is None else sum(haversine(v["lat"],v["lng"],a,b)<=804.672 for a,b in events)
         scored=score_venue(v,median,weather,reach)
         candidates.append({"venue":v,"score":scored,"reachability":reach,
                            "explanation":f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled.",
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
-    used=["google_places","mbta","nws"]
+    used=["google_places","mbta","nws","ticketmaster"]
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates[:8],"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
