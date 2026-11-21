@@ -10,7 +10,7 @@ import sqlite3
 import statistics
 import time as clock
 import asyncio
-from collections import Counter
+from collections import Counter, deque
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -21,6 +21,7 @@ import httpx
 import yaml
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1126,6 +1127,39 @@ async def discover_boston_resources() -> None:
 
 @app.get("/api/health")
 def health() -> dict[str,str]: return {"status":"ok"}
+# Per-visitor and site-wide sliding windows (requests per 60 s) on the endpoints that spend Google/Gemini/ORS/MBTA quota.
+RATE_LIMITS = {"/api/query": (30, 120), "/api/recommendations": (30, 120), "/api/explain": (30, 120)}
+_HITS: dict[tuple[str, str], deque[float]] = {}
+
+def client_key(request: Request) -> str:
+    # shortcut: trusts the left-most X-Forwarded-For (set by Render's proxies), which a client can spoof to dodge the
+    # per-visitor limit; the site-wide cap still bounds total spend. Upgrade if Render exposes a verified client-IP header.
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return forwarded or (request.client.host if request.client else "unknown")
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    limits = RATE_LIMITS.get(request.url.path)
+    if limits:
+        now, path = clock.time(), request.url.path
+        windows = [((client_key(request), path), limits[0]), (("*", path), limits[1])]
+        for key, cap in windows:
+            hits = _HITS.setdefault(key, deque())
+            while hits and hits[0] <= now - 60:
+                hits.popleft()
+            if len(hits) >= cap:
+                retry = max(1, int(hits[0] + 60 - now) + 1)
+                who = "this visitor" if key[0] != "*" else "the site"
+                return JSONResponse(status_code=429, headers={"Retry-After": str(retry)},
+                                    content={"error": {"code": "rate_limited", "message": f"Too many requests from {who}; try again in {retry} s."},
+                                             "sources_used": [], "generated_at": now_iso()})
+        for key, _ in windows:
+            _HITS[key].append(now)
+        if len(_HITS) > 5000:  # forget idle visitors so memory stays bounded
+            for key in [k for k, v in _HITS.items() if not v or v[-1] <= now - 60]:
+                del _HITS[key]
+    return await call_next(request)
+
 @app.post("/api/query")
 async def query(q: QueryInput) -> dict[str,Any]: return await make_query(q)
 @app.post("/api/explain")

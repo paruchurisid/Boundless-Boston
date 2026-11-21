@@ -114,5 +114,5 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 1. Ticketmaster: test live and open the PR once the key is approved.
 1. Refresh the OSM snapshot now and then: `.venv/bin/python -I scripts/refresh_osm_snapshot.py` (public Overpass servers are slow; the script tiles and retries, and keeps the old file on failure).
 2. Move Gemini to the paid tier before launch (Places facts on the free tier; see Google Maps terms above).
-3. Consider a per-IP rate limit on `/api/explain` and `/api/query` (Gemini cost).
+3. ✅ Rate limits: `/api/query`, `/api/recommendations` and `/api/explain` allow 30/min per visitor and 120/min site-wide (429 + Retry-After).
 4. Before launch: Google billing, consider moving Render to Virginia, and the security and accessibility checks in doc 05.
