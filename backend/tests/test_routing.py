@@ -35,3 +35,10 @@ def test_no_key_or_no_venues_skips_the_call(monkeypatch):
     monkeypatch.delenv("ORS_API_KEY", raising=False)
     assert asyncio.run(m.routed_walk_minutes(42.0, -71.0, VENUES)) is None
     assert asyncio.run(m.routed_walk_minutes(42.0, -71.0, [])) is None
+
+
+def test_only_known_non_google_venues_are_routable():
+    assert not m.routable({"source_refs": [{"source": "google_places", "external_id": "x"}]})
+    assert not m.routable({"source_refs": [{"source": "overpass"}, {"source": "google_places"}]})  # merged duplicate
+    assert not m.routable({}) and not m.routable({"source_refs": None}) and not m.routable({"source_refs": []})
+    assert m.routable({"source_refs": [{"source": "overpass", "external_id": "node/1"}]})

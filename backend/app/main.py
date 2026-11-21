@@ -429,6 +429,11 @@ async def routed_walk_minutes(lat: float, lng: float, venues: list[dict[str, Any
         return None
     return [None if d is None else max(1, math.ceil(d / 60)) for d in row]
 
+def routable(venue: dict[str, Any]) -> bool:
+    """Only venues with known, non-Google sources may go to OpenRouteService (Maps ToS 3.2.3(a),(c)); unknown origin fails closed."""
+    refs = venue.get("source_refs") or []
+    return bool(refs) and not any(r.get("source") == "google_places" for r in refs)
+
 def walk_estimate_minutes(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
     # Conservative street-grid multiplier over straight-line distance; always disclosed as an estimate.
     return max(1, math.ceil(haversine(lat1, lng1, lat2, lng2) * 1.3 / 78.0))
@@ -831,9 +836,9 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     places,_=await live_candidates(q)
     # Google Places coordinates must not go to a non-Google routing service (Maps ToS 3.2.3(a),(c)), so only
     # non-Google candidates are routed; Google venues keep the labeled straight-line estimate.
-    routable=[v for v in places if not any(r.get("source")=="google_places" for r in v.get("source_refs",[]))]
-    routed=await routed_walk_minutes(q.lat,q.lng,routable)
-    for venue,minutes in zip(routable,routed or []):
+    to_route=[v for v in places if routable(v)]
+    routed=await routed_walk_minutes(q.lat,q.lng,to_route)
+    for venue,minutes in zip(to_route,routed or []):
         if minutes is not None:
             venue["walk_min"],venue["walk_method"]=minutes,"routed"
     weather=await forecast_for_query(q)
@@ -873,7 +878,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     candidates=candidates[:8]
     for c in candidates:
         c["explain_facts"]=explanation_facts(c)
-    used=["google_places","mbta","nws","routing"]+(["gemini"] if q.free_text else [])
+    used=["google_places","mbta","nws"]+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates,"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
