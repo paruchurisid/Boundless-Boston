@@ -339,7 +339,7 @@ def _event_time(schedule: dict[str, Any], event: str = "departure") -> datetime 
         return None
 
 async def mbta_nearby_stops(lat: float, lng: float, radius_m: int = 1200) -> list[dict[str, Any]]:
-    params = {"filter[latitude]": lat, "filter[longitude]": lng, "filter[radius]": 0.015, "sort": "distance", "page[limit]": 100}  # radius is in degrees; 0.015 ≈ 1.2-1.7 km around Boston
+    params = {"filter[latitude]": lat, "filter[longitude]": lng, "filter[radius]": 0.015, "filter[location_type]": "0,1", "sort": "distance", "page[limit]": 100}  # radius is in degrees (0.015 ≈ 1.2-1.7 km here); 0,1 = stops and stations, not entrances/stairs
     headers={"x-api-key":os.environ["MBTA_API_KEY"]} if os.getenv("MBTA_API_KEY") else None
     data = await request_json("mbta", f"{MBTA_BASE}/stops", params, headers=headers)
     if not data:
@@ -456,12 +456,13 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
                             mbta_predictions(destination["id"], route_id, return_direction),
                         )
                         live_confirmed = bool(predicted_out & outbound_ids) and bool(predicted_back & return_ids)
+                        out_id, ret_id = min(outbound_ids, key=origin_trips.__getitem__), min(return_ids, key=venue_trips.__getitem__)
                         return {"reachable": True, "reach_value": 1.0 if live_confirmed else 0.5,
                                 "method": "predicted_round_trip" if live_confirmed else "scheduled_round_trip",
                                 "outbound": {"from_stop": origin["name"], "to_stop": destination["name"], "route": route_id,
-                                             "depart_at":origin_trips[next(iter(outbound_ids))].isoformat(),"arrive_at":destination_trips[next(iter(outbound_ids))].isoformat()},
+                                             "depart_at":origin_trips[out_id].isoformat(),"arrive_at":destination_trips[out_id].isoformat()},
                                 "return": {"from_stop": destination["name"], "to_stop": origin["name"], "route": route_id,
-                                           "depart_at":venue_trips[next(iter(return_ids))].isoformat(),"arrive_at":home_trips[next(iter(return_ids))].isoformat(),
+                                           "depart_at":venue_trips[ret_id].isoformat(),"arrive_at":home_trips[ret_id].isoformat(),
                                            "before_last_service": True},
                                 "label": "Live predictions and scheduled return" if live_confirmed else "Scheduled round trip; prediction unavailable"}
     return {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None,
