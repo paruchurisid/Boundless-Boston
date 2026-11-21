@@ -40,3 +40,13 @@ def test_window_slides(monkeypatch):
 def test_unlimited_paths_and_health_are_untouched():
     c = client()
     assert all(c.get("/api/health").status_code == 200 for _ in range(50))
+
+
+def test_rejected_requests_do_not_grow_memory():
+    c = client()
+    for i in range(120):
+        c.post("/api/query", json=BODY, headers={"x-forwarded-for": f"10.1.0.{i}"})
+    before = len(m._HITS)
+    for i in range(200):
+        assert c.post("/api/query", json=BODY, headers={"x-forwarded-for": f"10.2.{i}.1"}).status_code == 429
+    assert len(m._HITS) == before

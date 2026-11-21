@@ -1140,11 +1140,11 @@ def client_key(request: Request) -> str:
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
     limits = RATE_LIMITS.get(request.url.path)
-    if limits:
+    if limits and request.method != "OPTIONS":  # CORS preflights don't spend quota
         now, path = clock.time(), request.url.path
         windows = [((client_key(request), path), limits[0]), (("*", path), limits[1])]
         for key, cap in windows:
-            hits = _HITS.setdefault(key, deque())
+            hits = _HITS.get(key) or deque()  # no entry until accepted, so rejected floods can't grow memory
             while hits and hits[0] <= now - 60:
                 hits.popleft()
             if len(hits) >= cap:
@@ -1154,7 +1154,7 @@ async def rate_limit(request: Request, call_next):
                                     content={"error": {"code": "rate_limited", "message": f"Too many requests from {who}; try again in {retry} s."},
                                              "sources_used": [], "generated_at": now_iso()})
         for key, _ in windows:
-            _HITS[key].append(now)
+            _HITS.setdefault(key, deque()).append(now)
         if len(_HITS) > 5000:  # forget idle visitors so memory stays bounded
             for key in [k for k, v in _HITS.items() if not v or v[-1] <= now - 60]:
                 del _HITS[key]
