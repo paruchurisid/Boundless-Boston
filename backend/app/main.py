@@ -12,7 +12,7 @@ import asyncio
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -115,7 +115,7 @@ def normalized_params(params: dict[str, Any]) -> dict[str, Any]:
 
 async def request_json(source: str, url: str, params: dict[str, Any] | None = None,
                        headers: dict[str, str] | None = None, method: str = "GET",
-                       json_body: dict[str, Any] | None = None) -> Any | None:
+                       json_body: dict[str, Any] | None = None, timeout: float = 4.0) -> Any | None:
     """One outbound HTTP path with bounded retries, cache, and per-source breaker."""
     if DEMO:
         return None
@@ -139,7 +139,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
     last_code = None
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(4.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
                 response = await client.request(method, url, params=params, headers=headers, json=json_body)
             last_code = response.status_code
             retryable_status = response.status_code == 429 or response.status_code >= 500
@@ -226,6 +226,58 @@ async def parse_query_text(text: str | None) -> dict[str, Any]:
         return {**valid_filters(json.loads(data["candidates"][0]["content"]["parts"][0]["text"])), "parser": "gemini"}
     except (TypeError, KeyError, IndexError, ValueError):
         return {**parse_free_text(text), "parser": "rules"}
+
+EXPLAIN_SCHEMA = {"type": "OBJECT", "properties": {"why": {"type": "STRING"}}, "required": ["why"]}
+EXPLAIN_PROMPT = ("Write one friendly sentence (max 25 words) on why this place fits tonight. Use only the facts given; "
+                  "do not invent hours, prices, ratings, events or distances. Return JSON {why}.\nPlace: ")
+
+class ExplainInput(BaseModel):
+    """The facts the frontend echoes back from a recommendation's explain_facts; bounded because it is client input."""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(max_length=200)
+    name: str = Field(max_length=120)
+    categories: list[Annotated[str, Field(max_length=40)]] = Field(default_factory=list, max_length=3)
+    rating: float | None = Field(default=None, ge=0, le=5)
+    review_count: int | None = Field(default=None, ge=0)
+    price: Literal["$", "$$", "$$$"] | None = None
+    walk_min: int | None = Field(default=None, ge=0, le=300)
+    transit: str | None = Field(default=None, max_length=120)
+    temperature_f: float | None = Field(default=None, ge=-60, le=130)
+    rain_chance_pct: int | None = Field(default=None, ge=0, le=100)
+    nearby_events: int | None = Field(default=None, ge=0)
+
+def explanation_facts(rec: dict[str, Any]) -> dict[str, Any]:
+    v, comps = rec["venue"], rec["score"]["components"]
+    weather = comps["weather"]["raw"]
+    return {"id": v["id"], "name": v["name"][:120], "categories": [str(c)[:40] for c in v.get("categories", [])[:3]], "rating": v.get("rating"),
+            "review_count": v.get("review_count"), "price": "$" * v["price_level"] if v.get("price_level") else None,
+            "walk_min": v.get("walk_min"), "transit": rec["reachability"].get("label"),
+            "temperature_f": weather.get("temperature_f"), "rain_chance_pct": weather.get("precipitation_chance_pct"),
+            "nearby_events": comps["events"]["raw"].get("nearby_events")}
+
+def grounded(why: Any, facts: dict[str, Any]) -> bool:
+    """One short sentence whose every number appears in that place's facts (a cheap check against invented figures)."""
+    if not isinstance(why, str) or not 0 < len(why) <= 220:
+        return False
+    def numbers(text: str) -> set[float]:  # by value, so "53" matches 53.0 and "4,000" stays 4000
+        return {float(n.replace(",", "")) for n in re.findall(r"\d[\d,]*(?:\.\d+)?", text)}
+    return numbers(why) <= numbers(json.dumps(facts))
+
+async def gemini_explanation(facts: dict[str, Any]) -> str | None:
+    """A grounded one-line explanation for one place, or None so the caller keeps the template."""
+    key = os.getenv("GEMINI_API_KEY")
+    if DEMO or not key:
+        return None
+    body = {"contents": [{"parts": [{"text": EXPLAIN_PROMPT + json.dumps(facts)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": EXPLAIN_SCHEMA, "temperature": 0.4}}
+    model = os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"
+    # On demand from one card, so a slower reply is fine; one generation occasionally takes 5-6 s.
+    data = await request_json("gemini", GEMINI_URL.format(model=model), headers={"x-goog-api-key": key}, method="POST", json_body=body, timeout=10.0)
+    try:
+        why = json.loads(data["candidates"][0]["content"]["parts"][0]["text"])["why"].strip()
+    except (TypeError, KeyError, IndexError, ValueError, AttributeError):
+        return None
+    return why if grounded(why, facts) else None
 
 def matches_category(venue: dict[str, Any], wanted: str | None) -> bool:
     if not wanted:
@@ -758,8 +810,11 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
                            "explanation":f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled.",
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
+    candidates=candidates[:8]
+    for c in candidates:
+        c["explain_facts"]=explanation_facts(c)
     used=["google_places","mbta","nws"]+(["gemini"] if q.free_text else [])
-    return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates[:8],"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
+    return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates,"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
 async def discover_boston_resources() -> None:
@@ -771,6 +826,10 @@ async def discover_boston_resources() -> None:
 def health() -> dict[str,str]: return {"status":"ok"}
 @app.post("/api/query")
 async def query(q: QueryInput) -> dict[str,Any]: return await make_query(q)
+@app.post("/api/explain")
+async def explain(f: ExplainInput) -> dict[str,Any]:
+    why=await gemini_explanation(f.model_dump())
+    return envelope({"id":f.id,"explanation":why,"source":"gemini" if why else "unavailable"},["gemini"])
 @app.get("/api/recommendations")
 async def recommendations(time: datetime, budget: Literal["$","$$","$$$"], lat: float, lng: float, max_walk_min: int=Query(ge=1,le=120), free_text: str|None=None, weather_override: Literal["clear","rain","cold"]|None=None) -> dict[str,Any]:
     return await make_query(QueryInput(time=time,budget=budget,lat=lat,lng=lng,max_walk_min=max_walk_min,free_text=free_text,weather_override=weather_override))
