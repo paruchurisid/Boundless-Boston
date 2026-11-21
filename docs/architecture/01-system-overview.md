@@ -8,8 +8,8 @@ Boundless Boston Navigator produces a short list of places that fit a requested 
 
 ```text
 ┌────────────────────────────── Browser ───────────────────────────────┐
-│ React + Vite + Tailwind + Leaflet (OSM tiles) + Plasma UI             │
-│ Query form | ranked venue cards | map | Neighborhood | source health  │
+│ React + Vite + Tailwind + Plasma UI (no map; see doc 04)             │
+│ Query form | ranked venue cards | Neighborhood | source health       │
 └──────────────────────────────┬───────────────────────────────────────┘
                                │ same-origin JSON API
 ┌──────────────────────────────▼───────────────────────────────────────┐
@@ -37,7 +37,7 @@ Boundless Boston Navigator produces a short list of places that fit a requested 
                     └───────────────────────────┘
 ```
 
-OSM map tiles are a browser rendering dependency governed by the tile provider's policy; they do not supply venue data to the backend. The selected tile endpoint and attribution must be configurable and documented before deployment.
+No map tiles are loaded: the OSM map was removed for Google Maps Platform terms (see doc 04).
 
 ## Tier gates and delivery rule
 

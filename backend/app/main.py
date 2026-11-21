@@ -829,8 +829,11 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     parsed=await parse_query_text(q.free_text)
     budget=parsed.get("budget",q.budget); walk=parsed.get("max_walk_min",q.max_walk_min)
     places,_=await live_candidates(q)
-    routed=await routed_walk_minutes(q.lat,q.lng,places)
-    for venue,minutes in zip(places,routed or []):
+    # Google Places coordinates must not go to a non-Google routing service (Maps ToS 3.2.3(a),(c)), so only
+    # non-Google candidates are routed; Google venues keep the labeled straight-line estimate.
+    routable=[v for v in places if not any(r.get("source")=="google_places" for r in v.get("source_refs",[]))]
+    routed=await routed_walk_minutes(q.lat,q.lng,routable)
+    for venue,minutes in zip(routable,routed or []):
         if minutes is not None:
             venue["walk_min"],venue["walk_method"]=minutes,"routed"
     weather=await forecast_for_query(q)

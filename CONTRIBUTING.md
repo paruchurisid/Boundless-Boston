@@ -81,7 +81,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 | Gemini parser | 2 | ✅ Live: free text → filters, with a rule-based fallback |
 | Gemini "why this place" | 2 | ✅ On demand when "Why this?" opens (`POST /api/explain`); numbers are checked against the facts; separate breaker `gemini_explain` |
 | Ticketmaster | 2 | 🟡 Built on `b/ticketmaster`, waiting for API key approval |
-| OpenRouteService (real walk times) | 2 | ✅ One matrix call per search, before the walk filter; not cached (the response echoes coordinates); falls back to the straight-line estimate, shown as "(approx.)" |
+| OpenRouteService (real walk times) | 2 | 🟡 Wired, but **only for non-Google venues** (none until Overpass): Google Maps ToS 3.2.3(a)/(c) bar sending Places coordinates to it. Google venues show the straight-line estimate "(approx.)". Google's own Routes API is the compliant option, but it needs billing (the demo key gets 403). |
 | OpenStreetMap Overpass | 2 | ⬜ Not started (no key; needs the dedupe rules in doc 02) |
 | Yelp | 2 | ⬜ Deferred (strict usage terms) |
 | Census ACS | 3 | ⬜ Stretch goal |
@@ -94,6 +94,12 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
 - ⬜ Tests cover opening hours, weather, events and the parser only; `main.py` is mostly untested.
 
+### Google Maps terms
+
+- ✅ Removed the OSM/Leaflet map: ToS 3.2.3(e) and SST 14.2 bar Places content "with or near a non-Google Map".
+- ✅ Google coordinates are no longer sent to OpenRouteService.
+- ⚠️ Gemini: the explain endpoint sends Places facts to Gemini, and on the free tier Google may use that data to improve models, which risks ToS 3.2.3(c)(vii). Use the paid Gemini tier before launch.
+
 ### Scoring (Area A)
 
 - ✅ Reach is a hard filter: walk **or** MBTA round trip, so transit-only places can rank. The MBTA search considers the 3 nearest stations plus the 2 nearest bus stops.
@@ -105,6 +111,6 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 ### Up next
 
 1. Ticketmaster: test live and open the PR once the key is approved.
-2. Area A: reach filter and weight fixes (above).
+2. Move Gemini to the paid tier before launch (Places facts on the free tier; see Google Maps terms above).
 3. Consider a per-IP rate limit on `/api/explain` and `/api/query` (Gemini cost).
 4. Before launch: Google billing, consider moving Render to Virginia, and the security and accessibility checks in doc 05.

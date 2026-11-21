@@ -2,7 +2,7 @@
 
 ## Stack and layout
 
-React + Vite + TypeScript, Tailwind, Leaflet with OSM tiles, and `@cruxgarden/plasma-ui`. Google Places results remain in attributed venue cards; do not draw them as map features on the OSM map. The OSM map shows the user-selected area only. Mobile-first, responsive two-column desktop layout: fixed plain-CSS source-health strip; query form/header; results column with one scrollable Plasma panel containing semantic HTML venue cards; map column with Leaflet and ordinary controls; neighborhood panel; source details/demo controls. On narrow screens, form → results → map → neighborhood. All sources, attributions, approximation labels, and score details remain reachable at mobile widths.
+React + Vite + TypeScript, Tailwind, and `@cruxgarden/plasma-ui`. **No map is shown.** Google Maps Platform terms bar using Places content "with or near a non-Google Map" (ToS 3.2.3(e); Service Specific Terms 14.2), so the earlier Leaflet/OSM map was removed. If a map returns, it must be a Google Map, or Places must move to Places UI Kit (SST 15.1). Google Places results stay in attributed venue cards. Mobile-first, responsive two-column desktop layout: fixed plain-CSS source-health strip; query form/header; results column with one scrollable Plasma panel containing semantic HTML venue cards; side column with the neighborhood panel; source details/demo controls. On narrow screens, form → results → neighborhood. All sources, attributions, approximation labels, and score details remain reachable at mobile widths.
 
 ## State ownership
 
