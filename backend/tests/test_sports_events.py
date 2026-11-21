@@ -5,6 +5,7 @@ import app.main as m
 
 MLB = {"dates": [{"games": [
     {"gameDate": "2026-09-22T22:45:00Z", "venue": {"name": "Fenway Park"}, "teams": {"away": {"team": {"name": "Cleveland Guardians"}}}},
+    {"gameDate": "2026-09-22T23:10:00Z", "venue": {"name": "Fenway Park"}, "status": {"codedGameState": "D", "detailedState": "Postponed"}, "teams": {"away": {"team": {"name": "Yankees"}}}},
     {"gameDate": "2026-09-23T17:40:00Z", "venue": {"name": "Tropicana Field"}, "teams": {"away": {"team": {"name": "Boston Red Sox"}}}}]}]}
 NHL = {"games": [
     {"startTimeUTC": "2026-11-22T00:00:00Z", "venue": {"default": "TD Garden"}, "awayTeam": {"commonName": {"default": "Capitals"}}, "gameScheduleState": "OK"},
@@ -57,3 +58,26 @@ def test_backoff_after_failure_returns_unknown_without_crashing(monkeypatch):
     assert asyncio.run(m.boston_home_games()) is None and asyncio.run(m.boston_home_games()) is None
     assert len(calls) == 2  # one gather of MLB + NHL, then backoff
     m._SPORTS.clear()
+
+
+def test_a_failed_feed_keeps_its_last_list_and_retries_soon(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(m.clock, "time", lambda: t[0])
+    feeds = {"mlb": MLB, "nhl": NHL}
+    async def fake(source, url, *a, **k):
+        return feeds["mlb" if "mlb" in url else "nhl"]
+    monkeypatch.setattr(m, "request_json", fake)
+    m._SPORTS.clear()
+    assert len(asyncio.run(m.boston_home_games())) == 2
+    t[0] += 7 * 3600
+    feeds["nhl"] = None  # NHL times out on the next refresh
+    games = asyncio.run(m.boston_home_games())
+    assert {g["label"] for g in games} == {"Red Sox vs Cleveland Guardians", "Bruins vs Capitals"}  # Bruins kept
+    assert m._SPORTS["fresh_until"] == t[0] + 300  # retried in 5 min, not 6 h
+    m._SPORTS.clear()
+
+
+def test_unexpected_feed_shapes_count_as_down(monkeypatch):
+    for bad in ([1, 2], {"games": [{"startTimeUTC": "not a date", "venue": {"default": "TD Garden"}}]}):
+        assert [g["venue"] for g in load(monkeypatch, MLB, bad)] == ["Fenway Park"]
+    assert load(monkeypatch, "oops", [1]) is None

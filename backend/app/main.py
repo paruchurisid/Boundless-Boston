@@ -1044,8 +1044,37 @@ def nws_period_at(data: dict[str, Any] | None, target: datetime) -> dict[str, An
 SPORTS_VENUES = {"Fenway Park": (42.3467, -71.0972), "TD Garden": (42.3662, -71.0621)}
 _SPORTS: dict[str, Any] = {}
 
+def _mlb_home_games(data: Any) -> list[dict[str, Any]] | None:
+    try:
+        games = []
+        for day in data.get("dates", []):
+            for g in day.get("games", []):
+                status = g.get("status") or {}
+                if status.get("codedGameState") in ("D", "C") or status.get("detailedState") in ("Postponed", "Cancelled"):
+                    continue  # rainouts stay in the schedule at their original time
+                venue = (g.get("venue") or {}).get("name")
+                if venue in SPORTS_VENUES and g.get("gameDate"):
+                    away = (((g.get("teams") or {}).get("away") or {}).get("team") or {}).get("name", "visitors")
+                    games.append({"start": datetime.fromisoformat(g["gameDate"].replace("Z", "+00:00")), "venue": venue, "label": f"Red Sox vs {away}"})
+        return games
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None  # unexpected shape counts as the feed being down, never a failed search
+
+def _nhl_home_games(data: Any) -> list[dict[str, Any]] | None:
+    try:
+        games = []
+        for g in data.get("games", []):
+            venue = (g.get("venue") or {}).get("default")
+            if venue in SPORTS_VENUES and g.get("startTimeUTC") and g.get("gameScheduleState", "OK") == "OK":
+                away = ((g.get("awayTeam") or {}).get("commonName") or {}).get("default", "visitors")
+                games.append({"start": datetime.fromisoformat(g["startTimeUTC"].replace("Z", "+00:00")), "venue": venue, "label": f"Bruins vs {away}"})
+        return games
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
 async def boston_home_games() -> list[dict[str, Any]] | None:
-    """Red Sox (MLB) and Bruins (NHL) home games, refreshed at most every 6 h; None only if both feeds fail."""
+    """Red Sox (MLB) and Bruins (NHL) home games, refreshed every 6 h. A failed feed keeps its last good list and is
+    retried in 5 min; None only when neither team has ever loaded."""
     if _SPORTS and clock.time() < _SPORTS["fresh_until"]:
         return _SPORTS.get("games")  # absent after a failed first fetch (backoff with nothing to serve)
     today = datetime.now(ZoneInfo("America/New_York")).date()
@@ -1054,23 +1083,14 @@ async def boston_home_games() -> list[dict[str, Any]] | None:
         request_json("sports", "https://statsapi.mlb.com/api/v1/schedule",
                      {"sportId": 1, "teamId": 111, "startDate": (today - timedelta(days=1)).isoformat(), "endDate": (today + timedelta(days=2)).isoformat()}),
         request_json("sports", f"https://api-web.nhle.com/v1/club-schedule-season/BOS/{season}"))
-    if mlb is None and nhl is None:
-        _SPORTS["fresh_until"] = clock.time() + 300  # back off; keep any previous list
-        return _SPORTS.get("games")
-    games = []
-    for day in (mlb or {}).get("dates", []):
-        for g in day.get("games", []):
-            venue = (g.get("venue") or {}).get("name")
-            if venue in SPORTS_VENUES and g.get("gameDate"):
-                away = (((g.get("teams") or {}).get("away") or {}).get("team") or {}).get("name", "visitors")
-                games.append({"start": datetime.fromisoformat(g["gameDate"].replace("Z", "+00:00")), "venue": venue, "label": f"Red Sox vs {away}"})
-    for g in (nhl or {}).get("games", []):
-        venue = (g.get("venue") or {}).get("default")
-        if venue in SPORTS_VENUES and g.get("startTimeUTC") and g.get("gameScheduleState", "OK") == "OK":
-            away = ((g.get("awayTeam") or {}).get("commonName") or {}).get("default", "visitors")
-            games.append({"start": datetime.fromisoformat(g["startTimeUTC"].replace("Z", "+00:00")), "venue": venue, "label": f"Bruins vs {away}"})
-    _SPORTS.update(fresh_until=clock.time() + 6 * 3600, games=games)
-    return games
+    by_team = _SPORTS.setdefault("by_team", {})
+    fresh = {"mlb": None if mlb is None else _mlb_home_games(mlb), "nhl": None if nhl is None else _nhl_home_games(nhl)}
+    for team, games in fresh.items():
+        if games is not None:
+            by_team[team] = games
+    _SPORTS["fresh_until"] = clock.time() + (6 * 3600 if all(g is not None for g in fresh.values()) else 300)
+    _SPORTS["games"] = [g for games in by_team.values() for g in games] if by_team else None
+    return _SPORTS["games"]
 
 def games_around(games: list[dict[str, Any]] | None, when: datetime) -> list[dict[str, Any]] | None:
     """Games that started up to 3 h before, or start within 3 h after, the requested time (crowds arriving or leaving)."""
