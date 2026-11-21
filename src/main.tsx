@@ -6,7 +6,7 @@ import './style.css';
 
 type Venue={id:string;name:string;lat:number;lng:number;address:string|null;categories:string[];price_level:number|null;rating:number|null;review_count:number|null;walk_min:number;walk_estimate?:{label:string|null};indoor_outdoor:string;attributions:{source:string;text:string;url?:string;required_logo?:string;translate_no?:boolean}[]};
 type Line={id:string;name:string;color:string;mode:string};
-type Leg={route?:string;line?:Line;from_stop?:string;to_stop?:string;depart_at?:string;arrive_at?:string};
+type Leg={route?:string;line?:Line;from_stop?:string;to_stop?:string;depart_at?:string;arrive_at?:string;transfer?:{at:string;line:Line}};
 type Rec={venue:Venue;reachability:{method:string;label?:string;outbound?:Leg|null;return?:Leg|null;last_return?:(Leg&{last_of_night?:boolean})|null;total_min?:number|null;walk_to_stop_min?:number;walk_from_stop_min?:number};score:{value:number;components:Record<string,{value:number;weight:number;base_weight?:number;label?:string;missing_reason?:string|null;raw:Record<string,unknown>;sources:string[]}>};explanation:string;reach_explanation?:string;explain_facts?:Record<string,unknown>};
 type Result={recommendations:Rec[];sources_used:{source:string;status:string}[];generated_at:string;empty_message:string|null;query:{parsed_filters?:Record<string,unknown>};weather:{temperature_f:number|null;precipitation_chance_pct:number|null;forecast_for?:string;override?:string}};
 type Neighborhood={center:{lat:number;lng:number};radius_m:number;311:{top_categories:{category:string;count:number}[];period_start:string;period_end:string}|null;business_licenses:{name:string;issued_at:string;address?:string;distance_m?:number}[]|null;business_licenses_source?:string|null;city_contacts:{name:string;service:string;phone:string;url:string}[]|null};
@@ -23,7 +23,8 @@ function TransitRow({r}:{r:Rec}){
  const out=r.reachability.outbound, last=r.reachability.last_return;
  if(!out?.line) return null;
  const ride=rideMin(out);
- return <div className="transit-row"><span className="line-pill" style={{background:out.line.color,color:out.line.mode==='bus'?'#1a1a1a':'#fff'}}>{out.line.name}</span><span className="transit-stops">{r.reachability.walk_to_stop_min!=null?`${r.reachability.walk_to_stop_min} min walk · `:''}{out.from_stop} → {out.to_stop}{ride?` · ${ride} min ride`:''}{r.reachability.walk_from_stop_min!=null?` · ${r.reachability.walk_from_stop_min} min walk`:''}</span>{last?.depart_at&&<span className="last-train"><Moon size={12}/> {last.last_of_night?'Last train back':'Latest train back'} {clock(last.depart_at)}</span>}</div>;
+ const pill=(l:Line)=><span className="line-pill" style={{background:l.color,color:l.mode==='bus'?'#1a1a1a':'#fff'}}>{l.name}</span>;
+ return <div className="transit-row">{pill(out.line)}{out.transfer&&<>{' → '}{pill(out.transfer.line)}<span className="transit-stops">change at {out.transfer.at}</span></>}<span className="transit-stops">{r.reachability.walk_to_stop_min!=null?`${r.reachability.walk_to_stop_min} min walk · `:''}{out.from_stop} → {out.to_stop}{ride?` · ${ride} min ride`:''}{r.reachability.walk_from_stop_min!=null?` · ${r.reachability.walk_from_stop_min} min walk`:''}</span>{last?.depart_at&&<span className="last-train"><Moon size={12}/> {last.last_of_night?'Last train back':'Latest train back'} {clock(last.depart_at)}</span>}</div>;
 }
 const sourceNames:Record<string,string>={google_places:'Google Places',mbta:'MBTA',nws:'National Weather Service',boston_ckan:'Boston Open Data',sports:'Red Sox & Bruins schedules',overpass:'OpenStreetMap (backup)'};
 // datetime-local wants local wall time (toISOString is UTC); +2h then floor keeps the default 1-2 h ahead, never seconds.

@@ -69,7 +69,7 @@ def test_live_plan_prefers_subway_over_bus_and_never_uses_next_morning_trains(mo
     venue_stop = [{"id": "place-harsq", "name": "Harvard", "distance_m": 390, "lat": 42.3734, "lng": -71.1189}]
     async def stops(lat, lng, radius_m=1200): return venue_stop
     async def routes(stop_id): return {"Red", "1"}
-    async def alerts(stop_id, route_id): return []
+    async def alerts(stop_id, route_id, at): return []
     async def predictions(stop_id, route_id, direction): return set()
     tried = []
     q = query(21)
@@ -157,3 +157,42 @@ def test_failed_stop_list_fetch_backs_off(monkeypatch):
     assert asyncio.run(m.mbta_nearby_stops(42.355, -71.062)) == []
     assert len(calls) == 1  # one fetch for the burst (lock), then backoff instead of refetching
     m._MBTA_STOPS.clear()
+
+
+def test_one_transfer_when_no_single_line_works(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    import app.main as m
+    t0 = datetime(2026, 11, 22, 0, 0, tzinfo=timezone.utc)  # 7 pm Boston
+    def sched(trip, stop, minutes, kind):
+        when = (t0 + timedelta(minutes=minutes)).isoformat()
+        return {"relationships": {"trip": {"data": {"id": trip}}}, "attributes": {"departure_time": when, "arrival_time": when}}
+    # Orange: Jackson Sq -> DTX (trip O1, +10 -> +25); Red: DTX -> Harvard (R1, +30 -> +45). Returns 2 h later, reversed.
+    table = {("jsq", "Orange", 0): [sched("O1", "jsq", 10, "d")], ("place-dwnxg", "Orange", 0): [sched("O1", "dtx", 25, "a")],
+             ("place-dwnxg", "Red", 0): [sched("R1", "dtx", 30, "d")], ("hvd", "Red", 0): [sched("R1", "hvd", 45, "a")],
+             ("hvd", "Red", 1): [sched("R2", "hvd", 120, "d")], ("place-dwnxg", "Red", 1): [sched("R2", "dtx", 135, "a")],
+             ("place-dwnxg", "Orange", 1): [sched("O2", "dtx", 140, "d")], ("jsq", "Orange", 1): [sched("O2", "jsq", 155, "a")]}
+    async def schedules(stop, route, direction, start, end):
+        return [x for x in table.get((stop, route, direction), [])
+                if start <= datetime.fromisoformat(x["attributes"]["departure_time"]) <= end]
+    async def routes_at(stop):
+        return {"place-dwnxg": {"Red", "Orange"}}.get(stop, set())
+    async def no_alerts(*a): return []
+    async def no_predictions(*a): return set()
+    monkeypatch.setattr(m, "mbta_schedules", schedules)
+    monkeypatch.setattr(m, "mbta_routes_at", routes_at)
+    monkeypatch.setattr(m, "mbta_route_alerts", no_alerts)
+    monkeypatch.setattr(m, "mbta_predictions", no_predictions)
+    q = m.QueryInput.model_construct(time=t0, budget="$$", lat=42.3231, lng=-71.0999, max_walk_min=60, travel="walk_t")
+    origin = [{"id": "jsq", "name": "Jackson Square", "lat": 42.3231, "lng": -71.0999, "distance_m": 50}]
+    venue = [{"id": "hvd", "name": "Harvard", "lat": 42.3734, "lng": -71.1189, "distance_m": 80}]
+    plan = asyncio.run(m.transfer_round_trip(q, {"id": "v", "lat": 42.3734, "lng": -71.1189}, origin, venue,
+                                             {"jsq": {"Orange"}, "hvd": {"Red"}}, t0, t0 + timedelta(hours=1), t0 + timedelta(hours=5), False))
+    assert plan and plan["method"] == "scheduled_round_trip"
+    assert plan["outbound"]["transfer"]["at"] == "Downtown Crossing" and plan["outbound"]["transfer"]["line"]["name"] == "Red Line"
+    assert plan["outbound"]["line"]["name"] == "Orange Line" and plan["total_min"] >= 45
+    assert plan["return"]["transfer"]["line"]["name"] == "Orange Line"
+    # A missed connection (Red leaves before Orange arrives + 3 min) means no plan.
+    table[("place-dwnxg", "Red", 0)] = [sched("R1", "dtx", 26, "d")]
+    assert asyncio.run(m.transfer_round_trip(q, {"id": "v", "lat": 42.3734, "lng": -71.1189}, origin, venue,
+                                             {"jsq": {"Orange"}, "hvd": {"Red"}}, t0, t0 + timedelta(hours=1), t0 + timedelta(hours=5), False)) is None

@@ -65,7 +65,7 @@ You give it a place, a time, a budget and how long you'll travel (walking, or wa
 
 **"Get there and back"** means one of:
 - **Walk**: the walk fits your limit (minutes, from OpenRouteService or the labeled straight-line estimate).
-- **Walk + T** (default): a single MBTA line where *walk to the stop + wait + ride + walk to the place* fits your limit, **and** a train runs back later that night (at least 1 h after you set out, before service ends). If walking and the T both work, the faster one wins. "Walk only" ignores the T.
+- **Walk + T** (default): an MBTA trip (one line, or two subway lines with one change) where *walk to the stop + wait + ride(s) + walk to the place* fits your limit, **and** a train runs back later that night (at least 1 h after you set out, before service ends). If walking and the T both work, the faster one wins. "Walk only" ignores the T.
 
 ### Step 2: the score (0 to 1)
 
@@ -189,7 +189,8 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - ✅ T search: the 3 nearest stations plus the 2 nearest bus stops, subway first, at most 6 routes per place; line names and colors, plus the last train home on cards.
 - ✅ Parts with no data get weight 0 and the rest are rescaled (see "How ranking works").
 - ✅ Weights and thresholds load from `scoring/weights.yaml`; quality uses the true median.
-- ⬜ Direct lines only (no transfers).
+- ✅ One transfer between subway lines (at Park Street, Downtown Crossing, State, Government Center, Haymarket or North Station) when no single line works, e.g. "Orange Line → Red Line, change at Downtown Crossing". It allows 3 minutes to change, and the trip home is also two legs.
+- ✅ MBTA alerts only block a route when they are active at the trip time (a scheduled weekend suspension no longer blocks tonight's trains).
 
 ### Up next
 

@@ -746,8 +746,9 @@ async def mbta_predictions(stop_id: str, route_id: str, direction: int) -> set[s
             trips.add(trip_id)
     return trips
 
-async def mbta_route_alerts(stop_id: str, route_id: str) -> list[dict[str, Any]]:
-    params={"filter[stop]":stop_id,"filter[route]":route_id,"filter[activity]":"BOARD","page[limit]":50}
+async def mbta_route_alerts(stop_id: str, route_id: str, at: datetime) -> list[dict[str, Any]]:
+    # Only alerts active at the trip time: an upcoming weekend suspension must not block tonight's trains.
+    params={"filter[stop]":stop_id,"filter[route]":route_id,"filter[activity]":"BOARD","filter[datetime]":at.replace(microsecond=0).isoformat(),"page[limit]":50}
     headers={"x-api-key":os.environ["MBTA_API_KEY"]} if os.getenv("MBTA_API_KEY") else None
     data=await request_json("mbta",f"{MBTA_BASE}/alerts",params,headers=headers)
     return (data or {}).get("data",[])
@@ -767,6 +768,77 @@ def round_trip_plan(route_id: str, origin: str, destination: str, out: tuple[dat
             # last_of_night: the search window reached the end of the MBTA service day, so this really is the last train back.
             "last_return": {**leg(destination, origin, last), "last_of_night": last_of_night},
             "label": label or ("Live departure and scheduled return" if live else "Scheduled round trip; prediction unavailable")}
+
+# Subway transfer stations (parent stops). Routes are looked up live, so branch changes don't need code edits.
+TRANSFER_HUBS = {"place-pktrm": "Park Street", "place-dwnxg": "Downtown Crossing", "place-state": "State",
+                 "place-gover": "Government Center", "place-haecl": "Haymarket", "place-north": "North Station"}
+TRANSFER_MIN = timedelta(minutes=3)  # time to change platforms
+BLOCKING_EFFECTS = {"NO_SERVICE", "SUSPENSION"}
+
+async def route_blocked(route_id: str, stop_ids: tuple[str, ...], at: datetime) -> bool:
+    alerts = await asyncio.gather(*(mbta_route_alerts(sid, route_id, at) for sid in stop_ids))
+    return any(a.get("attributes", {}).get("effect") in BLOCKING_EFFECTS for group in alerts for a in group)
+
+async def find_leg(a: str, b: str, route_id: str, earliest: datetime, latest: datetime) -> tuple[datetime, datetime, int, str] | None:
+    """Earliest-arriving trip on one route from stop a (leaving at/after earliest) to stop b (arriving by latest):
+    (depart, arrive, direction, trip_id). Same trip at both stops, in time order."""
+    for direction in (0, 1):
+        at_a, at_b = await asyncio.gather(mbta_schedules(a, route_id, direction, earliest, latest),
+                                          mbta_schedules(b, route_id, direction, earliest, latest))
+        deps = {tid: t for x in at_a if (tid := _resource_trip_id(x)) and (t := _event_time(x, "departure"))}
+        arrs = {tid: t for x in at_b if (tid := _resource_trip_id(x)) and (t := _event_time(x, "arrival"))}
+        trips = [(arrs[tid], deps[tid], tid) for tid in deps if tid in arrs and earliest <= deps[tid] < arrs[tid] <= latest]
+        if trips:
+            arrive, depart, tid = min(trips)
+            return depart, arrive, direction, tid
+    return None
+
+async def transfer_round_trip(q: QueryInput, venue: dict[str, Any], origin_stops: list[dict[str, Any]],
+                              venue_stops: list[dict[str, Any]], routes_by_stop: dict[str, set[str]],
+                              depart: datetime, return_after: datetime, return_before: datetime, last_of_night: bool) -> dict[str, Any] | None:
+    """One change between two subway lines at a transfer station, there and back. Only the single best candidate is tried
+    (about 16 MBTA calls), and only when no direct line works."""
+    hub_ids = list(TRANSFER_HUBS)
+    hub_routes = dict(zip(hub_ids, await asyncio.gather(*(mbta_routes_at(h) for h in hub_ids))))
+    best = None
+    for origin in origin_stops:
+        for destination in venue_stops:
+            for a in routes_by_stop.get(origin["id"], set()):
+                for b in routes_by_stop.get(destination["id"], set()):
+                    if a == b or mbta_line(a)["mode"] != "subway" or mbta_line(b)["mode"] != "subway":
+                        continue
+                    for hub in hub_ids:
+                        if a in hub_routes[hub] and b in hub_routes[hub] and hub not in (origin["id"], destination["id"]):
+                            rank = origin["distance_m"] + destination["distance_m"]
+                            if best is None or rank < best[0]:
+                                best = (rank, origin, destination, a, b, hub)
+    if best is None:
+        return None
+    _, origin, destination, a, b, hub = best
+    walk_to = walk_estimate_minutes(q.lat, q.lng, origin["lat"], origin["lng"])
+    walk_from = walk_estimate_minutes(destination["lat"], destination["lng"], venue["lat"], venue["lng"])
+    catchable = depart + timedelta(minutes=walk_to)
+    if any(await asyncio.gather(route_blocked(a, (origin["id"], hub), catchable), route_blocked(b, (hub, destination["id"]), catchable))):
+        return None
+    leg1 = await find_leg(origin["id"], hub, a, catchable, depart + timedelta(minutes=90))
+    leg2 = leg1 and await find_leg(hub, destination["id"], b, leg1[1] + TRANSFER_MIN, leg1[1] + timedelta(minutes=60))
+    back1 = leg2 and await find_leg(destination["id"], hub, b, return_after, return_before)
+    back2 = back1 and await find_leg(hub, origin["id"], a, back1[1] + TRANSFER_MIN, return_before)
+    if not back2:
+        return None
+    live = bool(await mbta_predictions(origin["id"], a, leg1[2]) & {leg1[3]})
+    line_a, line_b, hub_name = mbta_line(a), mbta_line(b), TRANSFER_HUBS[hub]
+    total_min = math.ceil((leg2[1] - depart).total_seconds() / 60) + walk_from
+    def leg(frm: str, to: str, start: datetime, end: datetime, first: dict, second: dict) -> dict[str, Any]:
+        return {"from_stop": frm, "to_stop": to, "route": first["id"], "line": first, "depart_at": start.isoformat(), "arrive_at": end.isoformat(),
+                "transfer": {"at": hub_name, "line": second}}
+    # shortcut: last_return is the first return chain found, not the latest one of the night; search later chains if it matters.
+    back = leg(destination["name"], origin["name"], back1[0], back2[1], line_b, line_a)
+    return {"reachable": True, "reach_value": 1.0 if live else 0.5, "method": "predicted_round_trip" if live else "scheduled_round_trip",
+            "line": line_a, "outbound": leg(origin["name"], destination["name"], leg1[0], leg2[1], line_a, line_b),
+            "return": {**back, "before_last_service": True}, "last_return": {**back, "last_of_night": False},
+            "total_min": total_min, "walk_to_stop_min": walk_to, "walk_from_stop_min": walk_from,
+            "label": f"{line_a['name']} → {line_b['name']}, change at {hub_name}" + (" (live departure)" if live else " (scheduled)")}
 
 NO_TRANSIT = {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None}
 
@@ -816,9 +888,7 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
         walk_to = walk_estimate_minutes(q.lat, q.lng, origin["lat"], origin["lng"])
         walk_from = walk_estimate_minutes(destination["lat"], destination["lng"], venue["lat"], venue["lng"])
         catchable = depart + timedelta(minutes=walk_to)  # you have to walk to the stop before the train leaves
-        alerts_a,alerts_b=await asyncio.gather(mbta_route_alerts(origin["id"],route_id),mbta_route_alerts(destination["id"],route_id))
-        blocked_effects={"NO_SERVICE","SUSPENSION"}
-        if any(a.get("attributes",{}).get("effect") in blocked_effects for a in alerts_a+alerts_b):
+        if await route_blocked(route_id, (origin["id"], destination["id"]), catchable):
             continue
         # A valid leg must be the same trip at both ends, in the correct time order.
         for direction in (0, 1):
@@ -851,7 +921,9 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
                                        (origin_trips[out_id], destination_trips[out_id]), (venue_trips[ret_id], home_trips[ret_id]),
                                        (venue_trips[last_id], home_trips[last_id]), last_of_night, live_confirmed,
                                        depart, (walk_to, walk_from))
-    return {**NO_TRANSIT, "label": "No matching scheduled round trip; walking fallback"}
+    # No single line works: try one change between subway lines.
+    plan = await transfer_round_trip(q, venue, origin_stops, venue_stops, routes_by_stop, depart, return_after, return_before, last_of_night)
+    return plan or {**NO_TRANSIT, "label": "No matching scheduled round trip; walking fallback"}
 
 def _field_name(fields: list[dict[str, Any]], aliases: tuple[str, ...]) -> str | None:
     names = {str(f.get("id", "")).casefold(): str(f.get("id", "")) for f in fields}
