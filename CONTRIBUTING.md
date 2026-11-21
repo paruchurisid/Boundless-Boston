@@ -174,7 +174,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - ✅ Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
 - ✅ Frontend on a Render static site (`boundless-boston-web-5ze8`), with `/api/*` rewritten to the API (POST bodies and query strings pass through). It replaces Vercel.
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
-- ✅ Tests: 57 backend tests (hours, weather, events, parser, scoring, transit, OSM backup, rate limits) + 8 Playwright demo steps. Large parts of `main.py` (live adapters) are still only tested by hand.
+- ✅ Tests: 57 backend tests (hours, weather, events, parser, scoring, transit, OSM backup, rate limits) + 9 Playwright demo steps. Large parts of `main.py` (live adapters) are still only tested by hand.
 
 ### Google Maps terms
 

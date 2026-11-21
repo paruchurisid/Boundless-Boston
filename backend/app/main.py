@@ -1134,7 +1134,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     for venue,minutes in zip(to_route,routed or []):
         if minutes is not None:
             venue["walk_min"],venue["walk_method"]=minutes,"routed"
-    weather,games=await asyncio.gather(forecast_for_query(q),boston_home_games())
+    weather,games=await asyncio.gather(forecast_for_query(q),boston_home_games()) if not DEMO else (await forecast_for_query(q),None)
     if DEMO:  # one labeled demo game: TD Garden, 7 pm on the search's Boston date
         day=q.time.astimezone(ZoneInfo("America/New_York")).date()
         games=[{"start":datetime.combine(day,datetime.min.time(),ZoneInfo("America/New_York")).replace(hour=19),"venue":"TD Garden","label":"Bruins vs Demo Rivals (demo)"}]
@@ -1183,7 +1183,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     candidates=candidates[:8]
     for c in candidates:
         c["explain_facts"]=explanation_facts(c)
-    used=["google_places","mbta","nws"]+([] if DEMO else ["sports"])+(["overpass"] if backup else [])+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])
+    used=["google_places","mbta","nws","sports"]+(["overpass"] if backup else [])+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"travel":q.travel,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates,"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
