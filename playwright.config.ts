@@ -5,10 +5,10 @@ const python = process.env.PYTHON ?? '.venv/bin/python';
 
 export default defineConfig({
   testDir: 'e2e',
-  timeout: 30_000,
+  timeout: process.env.CI ? 60_000 : 30_000, // CI runners have no GPU, so the Plasma shaders render in software
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
-  use: { baseURL: 'http://localhost:5173', trace: 'retain-on-failure', timezoneId: 'America/New_York' },
+  use: { baseURL: 'http://localhost:5173', trace: 'retain-on-failure', timezoneId: 'America/New_York', reducedMotion: 'reduce' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
@@ -17,6 +17,7 @@ export default defineConfig({
       env: { APP_MODE: 'demo', CACHE_DB: 'test-results/e2e-cache.sqlite3' },
       reuseExistingServer: false, // never reuse a dev API that might be in live mode
     },
-    { command: 'npx vite --port 5173 --strictPort', url: 'http://localhost:5173', reuseExistingServer: !process.env.CI },
+    // The production build (vite preview reuses server.proxy for /api), not the on-the-fly dev server.
+    { command: 'npx vite build && npx vite preview --port 5173 --strictPort', url: 'http://localhost:5173', timeout: 120_000, reuseExistingServer: !process.env.CI },
   ],
 });
