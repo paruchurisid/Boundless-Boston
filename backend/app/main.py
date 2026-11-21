@@ -35,7 +35,7 @@ HEALTH: dict[str, dict[str, Any]] = {s: {"source": s, "status": "demo" if DEMO a
 FAILURES: dict[str, int] = {s: 0 for s in SOURCES}
 OPEN_UNTIL: dict[str, float] = {}
 HALF_OPEN_PROBES: set[str] = set()
-TTL = {"google_places": 300, "mbta": 60, "nws": 600, "boston_ckan": 3600, "routing": 1800}
+TTL = {"google_places": 300, "mbta": 60, "nws": 600, "boston_ckan": 3600}
 CKAN_BASE = os.getenv("BOSTON_CKAN_URL", "https://data.boston.gov/api/3/action")
 MBTA_BASE = "https://api-v3.mbta.com"
 CKAN_RESOURCES: dict[str, dict[str, Any]] = {}
@@ -122,7 +122,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
         return None
     params = params or {}
     cache_key = normalized_params({"url": url, "params": params, "body": json_body, "method": method})
-    cache_allowed = source not in ("google_places", "gemini", "gemini_explain")  # Places terms; never cache anything keyed on user free text
+    cache_allowed = source not in ("google_places", "gemini", "gemini_explain", "routing")  # Places terms; no user free text; ORS echoes origin + Places coordinates
     if clock.time() < OPEN_UNTIL.get(source, 0):
         cached_when_open = cache_get(source, cache_key) if cache_allowed else None
         HEALTH[source].update(status="open-circuit", detail="Circuit open for 60 seconds")
@@ -392,7 +392,7 @@ async def routed_walk_minutes(lat: float, lng: float, venues: list[dict[str, Any
     if not key:
         HEALTH["routing"].update(status="disabled", detail="ORS_API_KEY is not configured")
         return None
-    # ORS takes [lng, lat]; one matrix call covers every candidate. Origin rounded so nearby searches share the cache.
+    # ORS takes [lng, lat]; one matrix call covers every candidate. Not cached: the response echoes the coordinates.
     locations = [[round(lng, 4), round(lat, 4)]] + [[v["lng"], v["lat"]] for v in venues]
     body = {"locations": locations, "sources": [0], "destinations": list(range(1, len(locations))), "metrics": ["duration"]}
     data = await request_json("routing", ORS_MATRIX_URL, headers={"Authorization": key}, method="POST", json_body=body)

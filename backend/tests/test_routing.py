@@ -20,7 +20,7 @@ def test_converts_seconds_to_whole_minutes_and_keeps_unroutable_as_none(monkeypa
     minutes, calls = route(monkeypatch, {"durations": [[761.2, 59.0, None]]})
     assert minutes == [13, 1, None]
     body = calls[0]
-    assert body["locations"][0] == [-71.0623, 42.3551]  # [lng, lat], origin rounded
+    assert body["locations"][0] == [-71.0623, 42.3551]  # [lng, lat]
     assert body["locations"][1] == [-71.0711, 42.3587] and body["sources"] == [0] and body["destinations"] == [1, 2, 3]
 
 
