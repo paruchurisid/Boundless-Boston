@@ -136,10 +136,12 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
             return None
         HALF_OPEN_PROBES.add(source)
     retryable_status = False
+    last_code = None
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(4.0)) as client:
                 response = await client.request(method, url, params=params, headers=headers, json=json_body)
+            last_code = response.status_code
             retryable_status = response.status_code == 429 or response.status_code >= 500
             if retryable_status and attempt == 0:
                 await asyncio.sleep(random.uniform(0.1, 0.4))
@@ -166,7 +168,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
             break
     FAILURES[source] += 1
     HALF_OPEN_PROBES.discard(source)
-    status = "upstream unavailable" if retryable_status else "upstream request failed"
+    status = ("upstream unavailable" if retryable_status else "upstream request failed") + (f" (HTTP {last_code})" if last_code else " (no response)")
     HEALTH[source].update(status="disabled", checked_at=now_iso(), detail=status)
     if FAILURES[source] >= 3:
         OPEN_UNTIL[source] = clock.time() + 60
