@@ -221,8 +221,10 @@ def _period_datetime(point: dict[str, Any], zone: ZoneInfo, reference: datetime)
     hour, minute = int(point.get("hour", 0)), int(point.get("minute", 0))
     if day:
         try:
+            if isinstance(day, dict):  # Places API (New) sends {"year","month","day"}
+                return datetime(int(day["year"]), int(day["month"]), int(day["day"]), hour, minute, tzinfo=zone)
             return datetime.fromisoformat(f"{day}T{hour:02d}:{minute:02d}:00").replace(tzinfo=zone)
-        except ValueError:
+        except (ValueError, KeyError, TypeError):
             return None
     # Regular weekly periods use Google weekday numbering (Sunday=0).
     if "day" in point:
