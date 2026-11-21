@@ -121,7 +121,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
         return None
     params = params or {}
     cache_key = normalized_params({"url": url, "params": params, "body": json_body, "method": method})
-    cache_allowed = source != "google_places"
+    cache_allowed = source not in ("google_places", "gemini")  # Places terms; never cache anything keyed on user free text
     if clock.time() < OPEN_UNTIL.get(source, 0):
         cached_when_open = cache_get(source, cache_key) if cache_allowed else None
         HEALTH[source].update(status="open-circuit", detail="Circuit open for 60 seconds")
@@ -188,6 +188,44 @@ def parse_free_text(text: str | None) -> dict[str, Any]:
     for word,category in (("ramen","noodles"),("pizza","pizza"),("coffee","cafe"),("park","park")):
         if word in s: out["category"]=category; break
     return out
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+CATEGORIES = ["noodles", "pizza", "cafe", "park", "bar", "night_club", "restaurant"]
+GEMINI_SCHEMA = {"type": "OBJECT", "properties": {
+    "budget": {"type": "STRING", "enum": ["$", "$$", "$$$"], "nullable": True},
+    "max_walk_min": {"type": "INTEGER", "nullable": True},
+    "category": {"type": "STRING", "enum": CATEGORIES, "nullable": True}}}
+GEMINI_PROMPT = ("Extract search filters from a Boston night-out request. Set a field only when the request states or clearly "
+                 "implies it: budget ($ cheap, $$ moderate, $$$ upscale), max_walk_min (walking limit in minutes), "
+                 "category (closest of: " + ", ".join(CATEGORIES) + "). Otherwise use null.\nRequest: ")
+
+def valid_filters(raw: Any) -> dict[str, Any]:
+    """Keep only filters that pass the same bounds as the request schema; the model's output is untrusted."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if raw.get("budget") in ("$", "$$", "$$$"): out["budget"] = raw["budget"]
+    walk = raw.get("max_walk_min")
+    if isinstance(walk, int) and not isinstance(walk, bool) and 1 <= walk <= 120: out["max_walk_min"] = walk
+    if raw.get("category") in CATEGORIES: out["category"] = raw["category"]
+    return out
+
+async def parse_query_text(text: str | None) -> dict[str, Any]:
+    """Gemini when configured; the deterministic rules otherwise or on any failure."""
+    if not text:
+        return {}
+    key = os.getenv("GEMINI_API_KEY")
+    if DEMO or not key:
+        HEALTH["gemini"].update(status="demo" if DEMO else "disabled", detail="Rule-based parser in use" if DEMO else "GEMINI_API_KEY is not configured")
+        return {**parse_free_text(text), "parser": "rules"}
+    body = {"contents": [{"parts": [{"text": GEMINI_PROMPT + text}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": GEMINI_SCHEMA, "temperature": 0}}
+    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    data = await request_json("gemini", GEMINI_URL.format(model=model), headers={"x-goog-api-key": key}, method="POST", json_body=body)
+    try:
+        return {**valid_filters(json.loads(data["candidates"][0]["content"]["parts"][0]["text"])), "parser": "gemini"}
+    except (TypeError, KeyError, IndexError, ValueError):
+        return {**parse_free_text(text), "parser": "rules"}
 
 def matches_category(venue: dict[str, Any], wanted: str | None) -> bool:
     if not wanted:
@@ -682,7 +720,7 @@ async def forecast_for_query(q: QueryInput) -> dict[str, Any]:
     return result
 
 async def make_query(q: QueryInput) -> dict[str,Any]:
-    parsed=parse_free_text(q.free_text)
+    parsed=await parse_query_text(q.free_text)
     budget=parsed.get("budget",q.budget); walk=parsed.get("max_walk_min",q.max_walk_min)
     places,_=await live_candidates(q)
     weather=await forecast_for_query(q)
@@ -720,7 +758,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
                            "explanation":f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled.",
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
-    used=["google_places","mbta","nws"]
+    used=["google_places","mbta","nws"]+(["gemini"] if q.free_text else [])
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates[:8],"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
