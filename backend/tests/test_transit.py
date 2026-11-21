@@ -192,7 +192,20 @@ def test_one_transfer_when_no_single_line_works(monkeypatch):
     assert plan["outbound"]["transfer"]["at"] == "Downtown Crossing" and plan["outbound"]["transfer"]["line"]["name"] == "Red Line"
     assert plan["outbound"]["line"]["name"] == "Orange Line" and plan["total_min"] >= 45
     assert plan["return"]["transfer"]["line"]["name"] == "Orange Line"
+    assert plan["last_return"] is None  # never show the first return as the "latest train back"
     # A missed connection (Red leaves before Orange arrives + 3 min) means no plan.
     table[("place-dwnxg", "Red", 0)] = [sched("R1", "dtx", 26, "d")]
     assert asyncio.run(m.transfer_round_trip(q, {"id": "v", "lat": 42.3734, "lng": -71.1189}, origin, venue,
                                              {"jsq": {"Orange"}, "hvd": {"Red"}}, t0, t0 + timedelta(hours=1), t0 + timedelta(hours=5), False)) is None
+
+
+def test_an_alert_active_on_the_way_home_blocks_the_route(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    import app.main as m
+    t0 = datetime(2026, 11, 22, 0, 0, tzinfo=timezone.utc)
+    async def alerts(stop_id, route_id, at):
+        return [{"attributes": {"effect": "SUSPENSION"}}] if at >= t0 + timedelta(hours=1) else []
+    monkeypatch.setattr(m, "mbta_route_alerts", alerts)
+    assert asyncio.run(m.route_blocked("Red", ("a", "b"), t0)) is False
+    assert asyncio.run(m.route_blocked("Red", ("a", "b"), t0 + timedelta(hours=2))) is True

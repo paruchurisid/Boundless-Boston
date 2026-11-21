@@ -818,8 +818,9 @@ async def transfer_round_trip(q: QueryInput, venue: dict[str, Any], origin_stops
     walk_to = walk_estimate_minutes(q.lat, q.lng, origin["lat"], origin["lng"])
     walk_from = walk_estimate_minutes(destination["lat"], destination["lng"], venue["lat"], venue["lng"])
     catchable = depart + timedelta(minutes=walk_to)
-    if any(await asyncio.gather(route_blocked(a, (origin["id"], hub), catchable), route_blocked(b, (hub, destination["id"]), catchable))):
-        return None
+    if any(await asyncio.gather(route_blocked(a, (origin["id"], hub), catchable), route_blocked(b, (hub, destination["id"]), catchable),
+                                route_blocked(b, (destination["id"], hub), return_after), route_blocked(a, (hub, origin["id"]), return_after))):
+        return None  # either line blocked going out or on the way home
     leg1 = await find_leg(origin["id"], hub, a, catchable, depart + timedelta(minutes=90))
     leg2 = leg1 and await find_leg(hub, destination["id"], b, leg1[1] + TRANSFER_MIN, leg1[1] + timedelta(minutes=60))
     back1 = leg2 and await find_leg(destination["id"], hub, b, return_after, return_before)
@@ -832,11 +833,11 @@ async def transfer_round_trip(q: QueryInput, venue: dict[str, Any], origin_stops
     def leg(frm: str, to: str, start: datetime, end: datetime, first: dict, second: dict) -> dict[str, Any]:
         return {"from_stop": frm, "to_stop": to, "route": first["id"], "line": first, "depart_at": start.isoformat(), "arrive_at": end.isoformat(),
                 "transfer": {"at": hub_name, "line": second}}
-    # shortcut: last_return is the first return chain found, not the latest one of the night; search later chains if it matters.
+    # shortcut: no "latest train back" for transfers (only the first return chain is searched); add a later-chain search if wanted.
     back = leg(destination["name"], origin["name"], back1[0], back2[1], line_b, line_a)
     return {"reachable": True, "reach_value": 1.0 if live else 0.5, "method": "predicted_round_trip" if live else "scheduled_round_trip",
             "line": line_a, "outbound": leg(origin["name"], destination["name"], leg1[0], leg2[1], line_a, line_b),
-            "return": {**back, "before_last_service": True}, "last_return": {**back, "last_of_night": False},
+            "return": {**back, "before_last_service": True}, "last_return": None,
             "total_min": total_min, "walk_to_stop_min": walk_to, "walk_from_stop_min": walk_from,
             "label": f"{line_a['name']} → {line_b['name']}, change at {hub_name}" + (" (live departure)" if live else " (scheduled)")}
 
@@ -888,8 +889,9 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
         walk_to = walk_estimate_minutes(q.lat, q.lng, origin["lat"], origin["lng"])
         walk_from = walk_estimate_minutes(destination["lat"], destination["lng"], venue["lat"], venue["lng"])
         catchable = depart + timedelta(minutes=walk_to)  # you have to walk to the stop before the train leaves
-        if await route_blocked(route_id, (origin["id"], destination["id"]), catchable):
-            continue
+        if any(await asyncio.gather(route_blocked(route_id, (origin["id"], destination["id"]), catchable),
+                                    route_blocked(route_id, (destination["id"], origin["id"]), return_after))):
+            continue  # blocked going out, or on the way home (e.g. an evening suspension)
         # A valid leg must be the same trip at both ends, in the correct time order.
         for direction in (0, 1):
             out_a, out_b = await asyncio.gather(
