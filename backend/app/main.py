@@ -294,7 +294,7 @@ async def live_candidates(q: QueryInput) -> tuple[list[dict[str,Any]],bool]:
     if not key:
         HEALTH["google_places"].update(status="disabled", detail="GOOGLE_MAPS_API_KEY is not configured")
         return [], False
-    body={"locationRestriction":{"circle":{"center":{"latitude":q.lat,"longitude":q.lng},"radius":5000}},"maxResultCount":20,"includedTypes":["restaurant","cafe","park"]}
+    body={"locationRestriction":{"circle":{"center":{"latitude":q.lat,"longitude":q.lng},"radius":5000}},"maxResultCount":20,"includedTypes":["restaurant","cafe","bar","night_club","park"]}
     try:
         data=await request_json("google_places","https://places.googleapis.com/v1/places:searchNearby",{},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"places.id,places.displayName,places.location,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.currentOpeningHours,places.regularOpeningHours,places.primaryType,places.types,places.googleMapsUri,places.timeZone,places.attributions"},method="POST",json_body=body)
         if data is None:
@@ -310,7 +310,7 @@ async def live_candidates(q: QueryInput) -> tuple[list[dict[str,Any]],bool]:
             place_types=[str(t).casefold() for t in types]
             if any("park" in t or "garden" in t for t in place_types):
                 indoor_outdoor="outdoor"
-            elif any(any(word in t for word in ("restaurant","cafe","bakery","bar","food")) for t in place_types):
+            elif any(any(word in t for word in ("restaurant","cafe","bakery","bar","night_club","food")) for t in place_types):
                 indoor_outdoor="indoor"
             else:
                 indoor_outdoor="unknown"
