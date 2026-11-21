@@ -1,5 +1,7 @@
 # Boundless Boston Navigator
 
+**New here?** Read [CONTRIBUTING.md](CONTRIBUTING.md) for the design, workflow and current progress.
+
 A newcomer-facing Boston night planner. The app combines venue fit, walk estimates, transit context, weather, and neighborhood signals, while showing when information is demo, live, cached, or unavailable.
 
 ## Run locally
