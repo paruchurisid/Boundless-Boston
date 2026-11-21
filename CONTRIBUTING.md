@@ -98,6 +98,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 - ✅ Removed the OSM/Leaflet map: ToS 3.2.3(e) and SST 14.2 bar Places content "with or near a non-Google Map".
 - ✅ Google coordinates are no longer sent to OpenRouteService.
+- ✅ No coordinates go to the MBTA API: the full stop list (open data, ~8k stops) is fetched daily and the nearest stops are found locally; only stop IDs are sent for routes and schedules.
 - ⚠️ Gemini: the explain endpoint sends Places facts to Gemini, and on the free tier Google may use that data to improve models, which risks ToS 3.2.3(c)(vii). Use the paid Gemini tier before launch.
 
 ### Scoring (Area A)

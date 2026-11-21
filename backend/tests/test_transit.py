@@ -119,3 +119,24 @@ def test_the_faster_way_wins():
     assert walked["method"] == "walking_fallback" and walked["outbound"] is None and walked["total_min"] == 12
     assert m.reach_for(40, 15, plan) is None  # neither fits 15 min
     assert m.reach_for(40, 30, plan, "walk") is None  # walk-only ignores the T
+
+
+def test_nearby_stops_are_found_locally_without_sending_coordinates(monkeypatch):
+    import asyncio
+    import app.main as m
+    calls = []
+    async def fake_request_json(source, url, params=None, **kw):
+        calls.append((url, params))
+        return {"data": [
+            {"id": "place-dwnxg", "attributes": {"name": "Downtown Crossing", "latitude": 42.3555, "longitude": -71.0605, "location_type": 1}},
+            {"id": "70020", "attributes": {"name": "Downtown Crossing", "latitude": 42.3554, "longitude": -71.0604, "location_type": 0}},
+            {"id": "far", "attributes": {"name": "Quincy", "latitude": 42.25, "longitude": -71.0, "location_type": 1}},
+            {"id": "nogps", "attributes": {"name": "No GPS", "latitude": None, "longitude": None, "location_type": 0}}]}
+    monkeypatch.setattr(m, "request_json", fake_request_json)
+    m._MBTA_STOPS.clear()
+    first = asyncio.run(m.mbta_nearby_stops(42.355, -71.062))
+    second = asyncio.run(m.mbta_nearby_stops(42.356, -71.061))
+    assert [s["id"] for s in first] == ["place-dwnxg", "70020"] and second
+    assert len(calls) == 1  # the stop list is fetched once and reused
+    assert not any(k.startswith("filter[latitude]") or k.startswith("filter[longitude]") for k in calls[0][1])
+    m._MBTA_STOPS.clear()
