@@ -32,17 +32,36 @@ def tiles(n: int = 3) -> list[tuple[float, float, float, float]]:
     return [(s + i * dlat, w + j * dlng, s + (i + 1) * dlat, w + (j + 1) * dlng) for i in range(n) for j in range(n)]
 
 
-def fetch(box: tuple[float, float, float, float]) -> list[dict]:
+TILE_CACHE = Path(__file__).resolve().parent / ".osm_tiles"  # finished tiles, so a rerun resumes instead of starting over
+
+
+def fetch(box: tuple[float, float, float, float], depth: int = 0) -> list[dict]:
+    """One tile, cached on disk; a tile the busy servers can't finish is split into 4 smaller ones (up to 2 levels)."""
+    TILE_CACHE.mkdir(exist_ok=True)
+    cached = TILE_CACHE / ("%.5f_%.5f_%.5f_%.5f.json" % box)
+    if cached.exists():
+        return json.loads(cached.read_text())
     headers = {"User-Agent": "BoundlessBostonNavigator (https://github.com/paruchurisid/Boundless-Boston)"}
-    for attempt in range(3):
+    for attempt in range(2):
         for url in ENDPOINTS:
             try:
                 r = httpx.get(url, params={"data": query(box)}, headers=headers, timeout=150)
                 r.raise_for_status()
-                return r.json()["elements"]
+                elements = r.json()["elements"]
+                cached.write_text(json.dumps(elements))
+                print(f"tile {box}: {len(elements)} elements via {url}", file=sys.stderr, flush=True)
+                time.sleep(5)  # Overpass allows ~2 concurrent slots per IP; spacing avoids 429s
+                return elements
             except (httpx.HTTPError, ValueError, KeyError) as exc:
-                print(f"tile {box} attempt {attempt + 1} {url}: {type(exc).__name__}", file=sys.stderr)
-        time.sleep(20 * (attempt + 1))  # be polite to the shared servers
+                code = getattr(getattr(exc, "response", None), "status_code", "")
+                print(f"tile {box} attempt {attempt + 1} {url}: {type(exc).__name__} {code}", file=sys.stderr, flush=True)
+            time.sleep(15 * (attempt + 1))
+    if depth < 2:
+        s_, w, n, e = box
+        mlat, mlng = (s_ + n) / 2, (w + e) / 2
+        print(f"splitting tile {box}", file=sys.stderr, flush=True)
+        return [el for sub in ((s_, w, mlat, mlng), (s_, mlng, mlat, e), (mlat, w, n, mlng), (mlat, mlng, n, e))
+                for el in fetch(sub, depth + 1)]
     raise RuntimeError(f"tile {box} failed")
 
 
@@ -65,6 +84,8 @@ def main() -> int:
                                "bbox": BBOX, "license": "ODbL 1.0, © OpenStreetMap contributors",
                                "venues": venues}, separators=(",", ":")))
     print(f"wrote {len(venues)} venues to {OUT} ({OUT.stat().st_size // 1024} KB)")
+    for f in TILE_CACHE.glob("*.json"):
+        f.unlink()  # next refresh fetches fresh data
     return 0
 
 

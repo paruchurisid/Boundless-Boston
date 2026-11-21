@@ -83,7 +83,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 | Ticketmaster | 2 | 🟡 Built on `b/ticketmaster`, waiting for API key approval |
 | OpenRouteService (real walk times) | 2 | 🟡 Wired, but **only for non-Google venues** (none until Overpass): Google Maps ToS 3.2.3(a)/(c) bar sending Places coordinates to it. Google venues show the straight-line estimate "(approx.)". Google's own Routes API is the compliant option, but it needs billing (the demo key gets 403). |
 | OpenStreetMap (backup) | 2 | ✅ Used only when Google Places returns nothing (no key, quota, outage); never mixed with Google. Reads a bundled snapshot (`backend/data/osm_venues.json`, refreshed with `scripts/refresh_osm_snapshot.py`) because live Overpass takes 30–60 s. No ratings or prices ("PRICE UNKNOWN"); common `opening_hours` forms are parsed, the rest count as unknown. |
-| Yelp | 2 | ⬜ Deferred (strict usage terms) |
+| Yelp | 2 | ❌ Skipped: no free tier (paid plans from ~$229/month), and the 30-day trial forbids a public launch. Google already provides ratings. |
 | Census ACS | 3 | ⬜ Stretch goal |
 
 ### Platform
