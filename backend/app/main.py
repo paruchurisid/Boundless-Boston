@@ -847,7 +847,10 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         HEALTH["mbta"].update(status="demo", detail="Demo transit fixtures; reach uses walking fallback")
         plans={v["id"]: await assess_mbta_round_trip(q,v,origin_stops) for v in pre_candidates}
     else:
-        plan_values=await asyncio.gather(*(assess_mbta_round_trip(q,v,origin_stops) for v in pre_candidates), return_exceptions=True)
+        limit=asyncio.Semaphore(5)  # bounds the MBTA burst (each venue can make dozens of calls) so 429s don't trip the breaker
+        async def assess(v: dict[str, Any]) -> dict[str, Any]:
+            async with limit: return await assess_mbta_round_trip(q,v,origin_stops)
+        plan_values=await asyncio.gather(*(assess(v) for v in pre_candidates), return_exceptions=True)
         plans={v["id"]:(plan if isinstance(plan,dict) else {"reachable":False,"reach_value":0.0,"method":"unavailable","label":"MBTA plan unavailable"}) for v,plan in zip(pre_candidates,plan_values)}
     eligible=[]
     for v in pre_candidates:
