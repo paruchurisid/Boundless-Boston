@@ -140,3 +140,20 @@ def test_nearby_stops_are_found_locally_without_sending_coordinates(monkeypatch)
     assert len(calls) == 1  # the stop list is fetched once and reused
     assert not any(k.startswith("filter[latitude]") or k.startswith("filter[longitude]") for k in calls[0][1])
     m._MBTA_STOPS.clear()
+
+
+def test_failed_stop_list_fetch_backs_off(monkeypatch):
+    import asyncio
+    import app.main as m
+    calls = []
+    async def failing(*a, **kw):
+        calls.append(1)
+        return None
+    monkeypatch.setattr(m, "request_json", failing)
+    m._MBTA_STOPS.clear()
+    async def burst():
+        return await asyncio.gather(*(m.mbta_nearby_stops(42.355, -71.062) for _ in range(5)))
+    assert asyncio.run(burst()) == [[]] * 5
+    assert asyncio.run(m.mbta_nearby_stops(42.355, -71.062)) == []
+    assert len(calls) == 1  # one fetch for the burst (lock), then backoff instead of refetching
+    m._MBTA_STOPS.clear()

@@ -662,20 +662,30 @@ def _event_time(schedule: dict[str, Any], event: str = "departure") -> datetime 
         return None
 
 _MBTA_STOPS: dict[str, Any] = {}
+_MBTA_STOPS_LOCK = asyncio.Lock()  # one 2.7 MB fetch at a time; waiters reuse its result
 
 async def mbta_all_stops() -> list[dict[str, Any]] | None:
     """Every MBTA stop and station (open data, ~8k), fetched at most daily. Nearest-stop search then runs locally, so no
     coordinates (Google Places or the user's) are sent to the MBTA; only stop IDs are, for routes and schedules."""
-    if _MBTA_STOPS and clock.time() - _MBTA_STOPS["at"] < 86400:
-        return _MBTA_STOPS["stops"]
+    if _MBTA_STOPS and clock.time() < _MBTA_STOPS["fresh_until"]:
+        return _MBTA_STOPS.get("stops")
+    async with _MBTA_STOPS_LOCK:
+        if _MBTA_STOPS and clock.time() < _MBTA_STOPS["fresh_until"]:
+            return _MBTA_STOPS.get("stops")
+        return await _refresh_mbta_stops()
+
+async def _refresh_mbta_stops() -> list[dict[str, Any]] | None:
     headers = {"x-api-key": os.environ["MBTA_API_KEY"]} if os.getenv("MBTA_API_KEY") else None
     data = await request_json("mbta", f"{MBTA_BASE}/stops", {"filter[location_type]": "0,1", "fields[stop]": "name,latitude,longitude,location_type"},
                               headers=headers, timeout=15.0)
     if not data:
-        return _MBTA_STOPS.get("stops")  # keep yesterday's list over nothing
+        # Back off instead of refetching on every lookup (that would stall requests and trip the shared MBTA breaker);
+        # keep serving the previous list if there is one.
+        _MBTA_STOPS["fresh_until"] = clock.time() + (300 if _MBTA_STOPS.get("stops") else 60)
+        return _MBTA_STOPS.get("stops")
     stops = [{"id": st["id"], "name": a.get("name", "MBTA stop"), "lat": a["latitude"], "lng": a["longitude"], "station": a.get("location_type") == 1}
              for st in data.get("data", []) if (a := st.get("attributes", {})).get("latitude") is not None and a.get("longitude") is not None]
-    _MBTA_STOPS.update(at=clock.time(), stops=stops)
+    _MBTA_STOPS.update(fresh_until=clock.time() + 86400, stops=stops)
     return stops
 
 async def mbta_nearby_stops(lat: float, lng: float, radius_m: int = 1200) -> list[dict[str, Any]]:
@@ -777,6 +787,8 @@ def demo_round_trip(q: QueryInput, venue: dict[str, Any]) -> dict[str, Any]:
 async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_stops: list[dict[str, Any]]) -> dict[str, Any]:
     if DEMO:
         return demo_round_trip(q, venue)
+    if not origin_stops:
+        return {**NO_TRANSIT, "label": "No MBTA stop near you; walking estimate used"}
     venue_stops = await mbta_nearby_stops(venue["lat"], venue["lng"])
     if not origin_stops or not venue_stops:
         return {**NO_TRANSIT, "label": "No nearby MBTA stop pair; walking fallback"}
