@@ -2,7 +2,7 @@
 
 Start here. This page covers what the app does, how it fits together, how to ship a change, and where things stand. **Keep the Progress section current**: update it in the same PR as your change.
 
-_Last updated: 2026-11-21_ · **Live site:** Render static site `boundless-boston-web` (URL added after first deploy) · **API:** https://boundless-boston-api-5ze8.onrender.com
+_Last updated: 2026-11-21_ · **Live site:** https://boundless-boston-web-5ze8.onrender.com · **API:** https://boundless-boston-api-5ze8.onrender.com
 
 ## What it does
 
@@ -90,7 +90,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 - ✅ CI on PRs: pytest, typecheck and build (pnpm 10.34.9).
 - ✅ Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
-- 🟡 Frontend moving to a Render static site (`boundless-boston-web`); the Vercel projects were deleted.
+- ✅ Frontend on a Render static site (`boundless-boston-web-5ze8`), with `/api/*` rewritten to the API (POST bodies and query strings pass through). It replaces Vercel.
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
 - ⬜ Tests cover opening hours, weather, events and the parser only; `main.py` is mostly untested.
 
