@@ -54,3 +54,5 @@ def test_upstream_reason_names_the_google_quota_without_secrets():
     assert reason == "RESOURCE_EXHAUSTED RATE_LIMIT_EXCEEDED places.googleapis.com/search_nearby_requests SearchNearbyRequestsPerDay"
     assert "projects/123" not in reason
     assert m.upstream_reason(httpx.Response(503, text="<html>oops</html>")) == ""
+    for odd in ({"error": {"details": True}}, {"error": {"details": [{"metadata": "x"}]}}, {"error": "string"}, [1, 2]):
+        assert m.upstream_reason(httpx.Response(500, json=odd)) == ""

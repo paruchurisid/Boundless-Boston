@@ -121,16 +121,13 @@ def normalized_params(params: dict[str, Any]) -> dict[str, Any]:
 def upstream_reason(response: httpx.Response) -> str:
     """Short, non-secret reason from a Google-style error body (status, ErrorInfo reason, quota names); '' otherwise."""
     try:
-        err = response.json().get("error")
-    except (ValueError, AttributeError):
-        return ""
-    if not isinstance(err, dict):
-        return ""
-    parts = [str(err.get("status") or "")]
-    for detail in err.get("details") or []:
-        if isinstance(detail, dict):
+        err = response.json()["error"]
+        parts = [str(err.get("status") or "")]
+        for detail in err.get("details") or []:
             meta = detail.get("metadata") or {}
             parts += [str(detail.get("reason") or ""), str(meta.get("quota_metric") or ""), str(meta.get("quota_limit") or "")]
+    except Exception:  # display-only: a malformed body must never break request_json or its breaker bookkeeping
+        return ""
     return " ".join(p for p in parts if p)[:160]
 
 async def request_json(source: str, url: str, params: dict[str, Any] | None = None,

@@ -8,7 +8,9 @@ export default defineConfig({
   timeout: process.env.CI ? 60_000 : 30_000, // CI runners have no GPU, so the Plasma shaders render in software
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
-  use: { baseURL: 'http://localhost:5173', trace: 'retain-on-failure', timezoneId: 'America/New_York', reducedMotion: 'reduce' },
+  use: { baseURL: 'http://localhost:5173', trace: 'retain-on-failure', timezoneId: 'America/New_York', reducedMotion: 'reduce',
+    // No WebGL: Plasma uses its CSS fallback instead of slow software shaders on GPU-less CI runners.
+    launchOptions: { args: ['--disable-webgl', '--disable-webgl2'] } },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [
     {
