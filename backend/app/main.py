@@ -30,7 +30,7 @@ with sqlite3.connect(DB_PATH) as _db:
 app = FastAPI(title="Boundless Boston Navigator API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","), allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
-SOURCES = ["google_places", "mbta", "nws", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "gemini", "census_acs"]
+SOURCES = ["google_places", "mbta", "nws", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "gemini", "census_acs", "gemini_explain"]  # gemini_explain: own breaker, so explain load cannot disable query parsing
 HEALTH: dict[str, dict[str, Any]] = {s: {"source": s, "status": "demo" if DEMO and s in SOURCES[:4] else "disabled", "checked_at": None, "last_success_at": None, "cache_age_s": None, "detail": "Fixture mode" if DEMO and s in SOURCES[:4] else "Not configured"} for s in SOURCES}
 FAILURES: dict[str, int] = {s: 0 for s in SOURCES}
 OPEN_UNTIL: dict[str, float] = {}
@@ -121,7 +121,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
         return None
     params = params or {}
     cache_key = normalized_params({"url": url, "params": params, "body": json_body, "method": method})
-    cache_allowed = source not in ("google_places", "gemini")  # Places terms; never cache anything keyed on user free text
+    cache_allowed = source not in ("google_places", "gemini", "gemini_explain")  # Places terms; never cache anything keyed on user free text
     if clock.time() < OPEN_UNTIL.get(source, 0):
         cached_when_open = cache_get(source, cache_key) if cache_allowed else None
         HEALTH[source].update(status="open-circuit", detail="Circuit open for 60 seconds")
@@ -272,7 +272,7 @@ async def gemini_explanation(facts: dict[str, Any]) -> str | None:
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": EXPLAIN_SCHEMA, "temperature": 0.4}}
     model = os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"
     # On demand from one card, so a slower reply is fine; one generation occasionally takes 5-6 s.
-    data = await request_json("gemini", GEMINI_URL.format(model=model), headers={"x-goog-api-key": key}, method="POST", json_body=body, timeout=10.0)
+    data = await request_json("gemini_explain", GEMINI_URL.format(model=model), headers={"x-goog-api-key": key}, method="POST", json_body=body, timeout=10.0)
     try:
         why = json.loads(data["candidates"][0]["content"]["parts"][0]["text"])["why"].strip()
     except (TypeError, KeyError, IndexError, ValueError, AttributeError):
@@ -829,7 +829,7 @@ async def query(q: QueryInput) -> dict[str,Any]: return await make_query(q)
 @app.post("/api/explain")
 async def explain(f: ExplainInput) -> dict[str,Any]:
     why=await gemini_explanation(f.model_dump())
-    return envelope({"id":f.id,"explanation":why,"source":"gemini" if why else "unavailable"},["gemini"])
+    return envelope({"id":f.id,"explanation":why,"source":"gemini" if why else "unavailable"},["gemini_explain"])
 @app.get("/api/recommendations")
 async def recommendations(time: datetime, budget: Literal["$","$$","$$$"], lat: float, lng: float, max_walk_min: int=Query(ge=1,le=120), free_text: str|None=None, weather_override: Literal["clear","rain","cold"]|None=None) -> dict[str,Any]:
     return await make_query(QueryInput(time=time,budget=budget,lat=lat,lng=lng,max_walk_min=max_walk_min,free_text=free_text,weather_override=weather_override))
