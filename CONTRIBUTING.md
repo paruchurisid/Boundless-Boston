@@ -87,6 +87,22 @@ Each eligible place gets five sub-scores between 0 and 1. The final score is the
   OSM backup          momentum  – │ quality  – │ reach 50 │ events 25 │ weather 25     no ratings either
 ```
 
+### Why these metrics (and how sure we are)
+
+The five parts and their weights come from the original design (`docs/architecture/02-data-contracts-and-scoring.md`). They are **judgment calls, not tuned on data**: there has been no user testing or A/B comparison yet.
+
+| Part | Why it's there |
+|---|---|
+| Quality | "Is it good?" A Bayesian average (the IMDb idea) with a 50-review prior, so a handful of 5-star reviews can't beat thousands of 4.6s. |
+| Momentum | "Is it buzzing?" Meant to surface places on the rise. It can't be computed in live mode, because Google's terms bar storing review counts over time. |
+| Reach | The core promise: you can get there **and back**. A trip confirmed by a live MBTA prediction counts as more certain than a schedule. |
+| Events | Nightlife energy (a game letting out nearby). A small nudge, not a decider. |
+| Weather | Comfort: indoor places get a lift when it's raining or cold. |
+
+**Known effects of these choices:** in live mode quality effectively carries the most weight (43%), because momentum always drops out. Rain barely reorders results (weather is 10–14%; in the demo data the park only drops 0.06). In the OSM backup most places tie (no ratings), and ties go to the shorter walk.
+
+**To change them**, edit `scoring/weights.yaml` (the weights must sum to 1). Scores, breakdowns and the "Why this?" view follow automatically. If you retune, note the reason in your PR and update the tables here.
+
 ### Worked example (live, 8 p.m., bars near North Station, Google over quota so OSM backup)
 
 ```text
