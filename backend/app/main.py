@@ -1093,7 +1093,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
                            "explanation":(f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled." if reach["method"]=="walking_fallback"
                                          else f"Open at your requested time and within budget; about {reach.get('total_min')} minutes door to door by T: {transit_summary(reach) or reach['outbound']['route']}."),
                            "reach_explanation":reach.get("label")})
-    candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
+    candidates.sort(key=lambda x:(-x["score"]["value"],x["venue"]["walk_min"]))  # ties (common in the OSM backup) go to the shorter walk
     candidates=candidates[:8]
     for c in candidates:
         c["explain_facts"]=explanation_facts(c)
