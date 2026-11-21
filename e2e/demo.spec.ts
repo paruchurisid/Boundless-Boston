@@ -41,7 +41,7 @@ test('Why this? shows the full score breakdown, including unused parts', async (
   await first.getByRole('button', { name: /Why this/ }).click();
   const breakdown = first.locator('.breakdown');
   for (const part of ['momentum', 'quality', 'reach', 'events', 'weather']) await expect(breakdown).toContainText(part);
-  await expect(breakdown).toContainText('not used (event data unavailable)');
+  await expect(breakdown).toContainText('× 0.'); // each part shows its weight
 });
 
 test('rain lowers the outdoor park and lifts indoor places', async ({ page }) => {
@@ -93,4 +93,11 @@ test('Walk only hides the T places', async ({ page }) => {
 test('after the last train, far places drop out', async ({ page }) => {
   await searchAt(page, '23:50');
   await expect(tCards(page)).toHaveCount(0);
+});
+
+test('a nearby game shows on the card and lifts its events score', async ({ page }) => {
+  await searchAt(page, '20:00'); // demo Bruins game at TD Garden, 7 pm; Regina Pizzeria is in the North End
+  const regina = cards(page).filter({ has: page.getByRole('heading', { name: 'Regina Pizzeria' }) });
+  await expect(regina.locator('.event-row')).toContainText('Bruins vs Demo Rivals (demo) at TD Garden, 7:00 PM');
+  await expect(cards(page).filter({ has: page.getByRole('heading', { name: 'Boston Public Garden' }) }).locator('.event-row')).toHaveCount(0);
 });

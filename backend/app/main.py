@@ -1135,7 +1135,11 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         if minutes is not None:
             venue["walk_min"],venue["walk_method"]=minutes,"routed"
     weather,games=await asyncio.gather(forecast_for_query(q),boston_home_games())
-    games=None if DEMO else games_around(games,q.time)  # demo has no event fixtures; events stay "not used"
+    if DEMO:  # one labeled demo game: TD Garden, 7 pm on the search's Boston date
+        day=q.time.astimezone(ZoneInfo("America/New_York")).date()
+        games=[{"start":datetime.combine(day,datetime.min.time(),ZoneInfo("America/New_York")).replace(hour=19),"venue":"TD Garden","label":"Bruins vs Demo Rivals (demo)"}]
+        HEALTH["sports"].update(status="demo",detail="Demo game fixture at TD Garden, 7 pm")
+    games=games_around(games,q.time)
     max_price={"$":1,"$$":2,"$$$":3}[budget]
     pre_candidates=[]
     for venue in places:

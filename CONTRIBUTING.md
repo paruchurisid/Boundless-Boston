@@ -73,23 +73,23 @@ Each eligible place gets five sub-scores between 0 and 1. The final score is the
 
 | Part | Weight | What it measures | How |
 |---|---:|---|---|
-| **Momentum** | 30% | Is it getting popular? | Review growth over 30 days (max +10 → 1.0). *Not available in live mode, because Google's terms forbid storing review snapshots.* |
+| **Momentum** | 20% | Is it getting popular? | Review growth over 30 days (max +10 → 1.0). *Not available in live mode, because Google's terms forbid storing review snapshots.* |
 | **Quality** | 30% | Is it good? | Rating adjusted for review count, so a 5.0 from 3 reviews doesn't beat a 4.6 from 5,000: `(n/(n+50))·rating + (50/(n+50))·median`, ÷ 5 |
 | **Reach** | 20% | How sure is the trip? | 1.0 = live MBTA prediction confirms the ride there · 0.5 = scheduled T trip or walking |
-| **Events** | 10% | Is something happening nearby? | Red Sox/Bruins home games within ½ mile, from 3 h before to 3 h after (3+ games → 1.0) |
-| **Weather** | 10% | Does the place suit the weather? | Rain ≥ 50% or below 40°F: indoor 1.0, outdoor 0.0. Otherwise everything 0.5 |
+| **Events** | 15% | Is something happening nearby? | Red Sox/Bruins home games within ½ mile, from 3 h before to 3 h after (3+ games → 1.0) |
+| **Weather** | 15% | Does the place suit the weather? | Rain ≥ 50% or below 40°F: indoor 1.0, outdoor 0.0. Otherwise everything 0.5 |
 
 **Missing data doesn't count against a place.** If a part has no data, its weight is set to 0 and the remaining weights are scaled up to total 100%:
 
 ```text
-  base weights        momentum 30 │ quality 30 │ reach 20 │ events 10 │ weather 10
-  live (Google)       momentum  – │ quality 43 │ reach 29 │ events 14 │ weather 14     momentum missing
-  OSM backup          momentum  – │ quality  – │ reach 50 │ events 25 │ weather 25     no ratings either
+  base weights        momentum 20 │ quality 30   │ reach 20 │ events 15    │ weather 15
+  live (Google)       momentum  – │ quality 37.5 │ reach 25 │ events 18.75 │ weather 18.75   momentum missing
+  OSM backup          momentum  – │ quality  –   │ reach 40 │ events 30    │ weather 30      no ratings either
 ```
 
 ### Why these metrics (and how sure we are)
 
-The five parts and their weights come from the original design (`docs/architecture/02-data-contracts-and-scoring.md`). They are **judgment calls, not tuned on data**: there has been no user testing or A/B comparison yet.
+The five parts come from the original design (`docs/architecture/02-data-contracts-and-scoring.md`), which used 30/30/20/10/10. On 2026-11-21 the weights were changed to 20/30/20/15/15 so games and rain visibly matter. They are **judgment calls, not tuned on data**: there has been no user testing or A/B comparison yet.
 
 | Part | Why it's there |
 |---|---|
@@ -99,21 +99,21 @@ The five parts and their weights come from the original design (`docs/architectu
 | Events | Nightlife energy (a game letting out nearby). A small nudge, not a decider. |
 | Weather | Comfort: indoor places get a lift when it's raining or cold. |
 
-**Known effects of these choices:** in live mode quality effectively carries the most weight (43%), because momentum always drops out. Rain barely reorders results (weather is 10–14%; in the demo data the park only drops 0.06). In the OSM backup most places tie (no ratings), and ties go to the shorter walk.
+**Known effects of these choices:** in live mode quality still carries the most weight (37.5%), because momentum always drops out. Weather and events were raised from 10% to 15% (taken from momentum, which live mode can't compute anyway), so rain now visibly reorders results: in the demo data the outdoor park drops from #1 to #4. In the OSM backup most places tie (no ratings), and ties go to the shorter walk.
 
 **To change them**, edit `scoring/weights.yaml` (the weights must sum to 1). Scores, breakdowns and the "Why this?" view follow automatically. If you retune, note the reason in your PR and update the tables here.
 
 ### Worked example (live, 8 p.m., bars near North Station, Google over quota so OSM backup)
 
 ```text
-  Sullivan's Tap      reach   0.50 × 50% = 0.250   (walkable)
-                      events  0.33 × 25% = 0.083   (Bruins vs Capitals at TD Garden, 7:00 PM, 1 of 3 → 0.33)
-                      weather 0.50 × 25% = 0.125   (clear, 53°F → neutral)
+  Sullivan's Tap      reach   0.50 × 40% = 0.200   (walkable)
+                      events  0.33 × 30% = 0.100   (Bruins vs Capitals at TD Garden, 7:00 PM, 1 of 3 → 0.33)
+                      weather 0.50 × 30% = 0.150   (clear, 53°F → neutral)
                       ─────────────────────────────
-                      score            = 0.458  → shown as 46
+                      score            = 0.450  → shown as 45
 ```
 
-Every card's **"Why this?"** shows exactly this breakdown: each part's value, its effective weight, its sources, and "not used (reason)" for parts without data.
+Cards also show any counted game ("🏒 Bruins vs Capitals at TD Garden, 7:00 PM"). Every card's **"Why this?"** shows exactly this breakdown: each part's value, its effective weight, its sources, and "not used (reason)" for parts without data.
 
 ## Who owns what
 

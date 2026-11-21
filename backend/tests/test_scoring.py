@@ -8,7 +8,7 @@ REACH = {"reach_value": 0.5}
 
 
 def test_weights_come_from_yaml_and_sum_to_one():
-    assert m.SCORING["weights"] == {"momentum": 0.30, "quality": 0.30, "reach": 0.20, "events": 0.10, "weather": 0.10}
+    assert m.SCORING["weights"] == {"momentum": 0.20, "quality": 0.30, "reach": 0.20, "events": 0.15, "weather": 0.15}
 
 
 def test_missing_components_drop_out_and_the_rest_rescale():
@@ -16,7 +16,7 @@ def test_missing_components_drop_out_and_the_rest_rescale():
     s = m.score_venue(live, 4.0, WEATHER, REACH)  # momentum and events both missing
     c = s["components"]
     assert c["momentum"]["weight"] == 0 and c["events"]["weight"] == 0
-    assert c["quality"]["weight"] == pytest.approx(0.5) and c["reach"]["weight"] == pytest.approx(1 / 3)
+    assert c["quality"]["weight"] == pytest.approx(0.30 / 0.65) and c["reach"]["weight"] == pytest.approx(0.20 / 0.65)  # quality+reach+weather remain
     assert sum(x["weight"] for x in c.values()) == pytest.approx(1.0)
     assert c["quality"]["base_weight"] == 0.30
 

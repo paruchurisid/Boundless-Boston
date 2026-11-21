@@ -1,6 +1,6 @@
 version: 1
 scale: {min: 0.0, max: 1.0}
-weights: {momentum: 0.30, quality: 0.30, reach: 0.20, events: 0.10, weather: 0.10}
+weights: {momentum: 0.20, quality: 0.30, reach: 0.20, events: 0.15, weather: 0.15}
 quality: {prior_reviews_m: 50, prior_rating_c: candidate_median_rating, rating_max: 5.0}
 momentum:
   window_days: 30
