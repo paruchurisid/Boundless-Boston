@@ -339,7 +339,7 @@ def _event_time(schedule: dict[str, Any], event: str = "departure") -> datetime 
         return None
 
 async def mbta_nearby_stops(lat: float, lng: float, radius_m: int = 1200) -> list[dict[str, Any]]:
-    params = {"filter[latitude]": lat, "filter[longitude]": lng, "filter[radius]": 1.0, "page[limit]": 100}
+    params = {"filter[latitude]": lat, "filter[longitude]": lng, "filter[radius]": 0.015, "sort": "distance", "page[limit]": 100}  # radius is in degrees; 0.015 ≈ 1.2-1.7 km around Boston
     headers={"x-api-key":os.environ["MBTA_API_KEY"]} if os.getenv("MBTA_API_KEY") else None
     data = await request_json("mbta", f"{MBTA_BASE}/stops", params, headers=headers)
     if not data:
