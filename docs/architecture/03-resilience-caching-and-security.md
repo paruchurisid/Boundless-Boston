@@ -24,7 +24,7 @@ Fresh cache returns `cached` with age. Stale data may be served only under per-s
 | Yelp Fusion | 24 h cache only if terms allow; stale retention disabled absent compliance review | Do not store/reuse Yelp content beyond permitted policy. Keep Yelp attribution on displayed business data; no review text copied. Cross-check-only by default. |
 | Overpass | 24 h minimum request cache; stale up to 7 d | Respect public instance usage policy, identify app, bound area/query, avoid repeated requests. Switch endpoint or disable when policy/limits require. Never scrape for high-volume service. |
 | Routing | 30 min; stale up to 6 h | Provider-specific terms govern route retention; never use public OSRM demo server. |
-| Anthropic | No cache for user free text by default; optionally cache only parsed normalized filters without original text if privacy review approves | Send minimal input; API key server-side; disable and use deterministic regex/templates if unconfigured. |
+| Gemini | No cache for user free text by default; optionally cache only parsed normalized filters without original text if privacy review approves | Send minimal input; API key server-side; disable and use deterministic regex/templates if unconfigured. |
 | Census ACS | 30 d | Public aggregate data only; avoid presenting ecological data as individual attributes. |
 
 TTL values are application defaults; restrictive upstream terms always take precedence and require a config change before production.
@@ -35,6 +35,6 @@ At startup resolve each configured package through CKAN `package_show`; find res
 
 ## Security boundary
 
-Secrets (`GOOGLE_MAPS_API_KEY`, MBTA, Ticketmaster, Yelp, routing, Anthropic) exist only in backend environment/secret manager; frontend build environment contains only explicitly public variables. `.env` is ignored and never committed. Validate lat `[-90,90]`, lng `[-180,180]`, budget enum exactly `$|$$|$$$`, time between now and now+24 h in UTC conversion, walk integer 1–120, radius bounded 50–5000 m, free text ≤300 chars. Reject NaN/Infinity, malformed encodings, and unknown fields unless contract explicitly allows them. Escape/sanitize rendered text; no HTML from provider is trusted.
+Secrets (`GOOGLE_MAPS_API_KEY`, MBTA, Ticketmaster, Yelp, routing, Gemini via `GEMINI_API_KEY`) exist only in backend environment/secret manager; frontend build environment contains only explicitly public variables. `.env` is ignored and never committed. Validate lat `[-90,90]`, lng `[-180,180]`, budget enum exactly `$|$$|$$$`, time between now and now+24 h in UTC conversion, walk integer 1–120, radius bounded 50–5000 m, free text ≤300 chars. Reject NaN/Infinity, malformed encodings, and unknown fields unless contract explicitly allows them. Escape/sanitize rendered text; no HTML from provider is trusted.
 
 Apply per-IP rate limits at BFF: 30 query requests/minute and 60 neighborhood/health requests/minute, configurable; return 429 with `Retry-After`. Trust forwarded IP headers only from configured reverse proxies. CORS allowlist only deployed origins. Structured logging redacts API key patterns, Authorization headers, cookies, coordinates, and free text; run a CI frontend bundle grep for secret-like patterns and fail build on matches. Add dependency pinning/lockfile and security updates. No user account or user-data persistence is in Phase 0 scope.

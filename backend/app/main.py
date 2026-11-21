@@ -30,7 +30,7 @@ with sqlite3.connect(DB_PATH) as _db:
 app = FastAPI(title="Boundless Boston Navigator API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","), allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
-SOURCES = ["google_places", "mbta", "open_meteo", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "anthropic", "census_acs"]
+SOURCES = ["google_places", "mbta", "open_meteo", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "gemini", "census_acs"]
 HEALTH: dict[str, dict[str, Any]] = {s: {"source": s, "status": "demo" if DEMO and s in SOURCES[:4] else "disabled", "checked_at": None, "last_success_at": None, "cache_age_s": None, "detail": "Fixture mode" if DEMO and s in SOURCES[:4] else "Not configured"} for s in SOURCES}
 FAILURES: dict[str, int] = {s: 0 for s in SOURCES}
 OPEN_UNTIL: dict[str, float] = {}

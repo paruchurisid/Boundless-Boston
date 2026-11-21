@@ -5,7 +5,7 @@ All timestamps are RFC 3339 UTC. JSON numbers are finite; coordinates use WGS84 
 ## Unified domain types
 
 ```ts
- type SourceId = 'google_places'|'mbta'|'open_meteo'|'boston_ckan'|'ticketmaster'|'yelp'|'overpass'|'routing'|'anthropic'|'census_acs';
+ type SourceId = 'google_places'|'mbta'|'open_meteo'|'boston_ckan'|'ticketmaster'|'yelp'|'overpass'|'routing'|'gemini'|'census_acs';
  type SourceMode = 'live'|'cached'|'demo'|'disabled'|'open-circuit';
  type Attribution = {source: SourceId; text: string; url?: string; required_logo?: string; translate_no?: boolean};
  type SourceRef = {source: SourceId; external_id: string; url?: string};

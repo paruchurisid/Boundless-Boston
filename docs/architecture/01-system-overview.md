@@ -71,7 +71,7 @@ Dependency direction is one-way: UI → BFF contracts → domain services → so
 | Yelp | Cache where policy allows; otherwise omit cross-check | Disabled; omit | Omit | Never block Google candidate; no Yelp content shown without compliance metadata. |
 | Overpass | Cache/fixture, else omit OSM candidates | No key normally; configuration/policy may disable | Omit | Never treat missing data as proof that a place is closed. |
 | Routing provider | Cache/fixture, else use documented conservative straight-line walk estimate only if UI marks it estimated; otherwise exclude unknown walk eligibility | Disabled | Same | Never present estimate as routed time. Tier 2. |
-| Anthropic parser/explainer | Deterministic parser/template fallback | Disabled | Fallback | No unsupported claims; explanations derive only from response breakdown. |
+| Gemini parser/explainer | Deterministic parser/template fallback | Disabled | Fallback | No unsupported claims; explanations derive only from response breakdown. |
 | Census ACS | Cache or omit | Disabled | Omit | Tier 3 optional context only; never changes core eligibility. |
 
 Common wrapper states and cache freshness semantics are specified in `03-resilience-caching-and-security.md`. A stale record is not silently presented as live. A fixture record carries `mode=demo` and a visible demo badge.
