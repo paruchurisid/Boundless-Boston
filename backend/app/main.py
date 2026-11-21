@@ -132,6 +132,7 @@ def source_use(source: str, status: str | None = None) -> dict[str, Any]:
         "mbta": [{"source": source, "text": "MBTA V3 API", "url": "https://api-v3.mbta.com/"}],
         "nws": [{"source": source, "text": "Weather data by the National Weather Service", "url": "https://www.weather.gov/"}],
         "boston_ckan": [{"source": source, "text": "City of Boston Open Data", "url": "https://data.boston.gov/"}],
+        "overpass": [{"source": source, "text": "© OpenStreetMap contributors (ODbL)", "url": "https://www.openstreetmap.org/copyright"}],
         "routing": [{"source": source, "text": "© openrouteservice.org by HeiGIT | Map data © OpenStreetMap contributors", "url": "https://openrouteservice.org/"}],
     }
     return {"source": source, "status": status or h["status"], "observed_at": h["last_success_at"], "cache_age_s": h["cache_age_s"], "attribution": attributions.get(source, [])}
@@ -512,6 +513,79 @@ def routable(venue: dict[str, Any]) -> bool:
 def walk_estimate_minutes(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
     # Conservative street-grid multiplier over straight-line distance; always disclosed as an estimate.
     return max(1, math.ceil(haversine(lat1, lng1, lat2, lng2) * 1.3 / 78.0))
+
+OSM_SNAPSHOT = ROOT / "backend" / "data" / "osm_venues.json"  # refreshed by scripts/refresh_osm_snapshot.py
+OSM_DAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+
+def parse_osm_hours(spec: str | None) -> dict[int, list[tuple[int, int]]] | None:
+    """Common OSM opening_hours forms → {weekday: [(start_min, end_min)]}; end may pass 1440 (after midnight).
+    Supports '24/7', 'Mo-Fr 11:00-22:00; Sa,Su 10:00-02:00', 'Su off'. Anything else (PH, months, comments) → None = unknown."""
+    if not spec:
+        return None
+    spec = spec.strip()
+    if spec == "24/7":
+        return {d: [(0, 1440)] for d in range(7)}
+    week: dict[int, list[tuple[int, int]]] = {d: [] for d in range(7)}
+    for rule in filter(None, (r.strip() for r in spec.split(";"))):
+        m = re.fullmatch(r"(?:([A-Z][a-z](?:-[A-Z][a-z])?(?:,[A-Z][a-z](?:-[A-Z][a-z])?)*)\s+)?(off|closed|\d\d:\d\d-\d\d:\d\d(?:,\d\d:\d\d-\d\d:\d\d)*)", rule)
+        if not m:
+            return None
+        days: set[int] = set()
+        for part in (m.group(1) or "Mo-Su").split(","):
+            ends = part.split("-")
+            if any(e not in OSM_DAYS for e in ends):
+                return None  # PH, SH, etc.
+            a, b = OSM_DAYS.index(ends[0]), OSM_DAYS.index(ends[-1])
+            days.update(range(a, b + 1) if a <= b else [*range(a, 7), *range(0, b + 1)])  # Su-Th wraps
+        spans = []
+        if m.group(2) not in ("off", "closed"):
+            for span in m.group(2).split(","):
+                (h1, m1), (h2, m2) = (map(int, t.split(":")) for t in span.split("-"))
+                start, end = h1 * 60 + m1, h2 * 60 + m2
+                spans.append((start, end + 1440 if end <= start else end))  # 18:00-02:00 runs past midnight
+        for d in days:
+            week[d] = spans  # a later rule replaces earlier ones for its days
+    return week
+
+def osm_open_at(spec: str | None, when: datetime) -> str:
+    week = parse_osm_hours(spec)
+    if week is None:
+        return "unknown"
+    local = when.astimezone(ZoneInfo("America/New_York"))
+    minute, day = local.hour * 60 + local.minute, local.weekday()
+    today = any(a <= minute < b for a, b in week[day])
+    from_yesterday = any(b > 1440 and minute < b - 1440 for _, b in week[(day - 1) % 7])
+    return "open" if today or from_yesterday else "closed"
+
+def osm_candidates(q: QueryInput, limit: int = 20) -> list[dict[str, Any]]:
+    """Backup venues from the bundled OSM snapshot (no key, no live call): the nearest named places within 5 km."""
+    try:
+        snap = json.loads(OSM_SNAPSHOT.read_text())
+    except (OSError, ValueError):
+        HEALTH["overpass"].update(status="disabled", detail="No OSM snapshot; run scripts/refresh_osm_snapshot.py")
+        return []
+    generated = datetime.fromisoformat(snap["generated_at"])
+    HEALTH["overpass"].update(status="cached", last_success_at=generated.isoformat(), checked_at=now_iso(),
+                              cache_age_s=round((datetime.now(timezone.utc) - generated).total_seconds()),
+                              detail="Bundled OSM snapshot (backup while Google Places is unavailable)")
+    near = sorted(((haversine(q.lat, q.lng, v["lat"], v["lng"]), v) for v in snap["venues"]), key=lambda x: x[0])
+    out = []
+    for distance, v in near:
+        if distance > 5000 or len(out) >= limit:
+            break
+        kind = {"nightclub": "night_club"}.get(v.get("amenity") or "", v.get("amenity") or v.get("leisure") or "venue")  # match Google type names
+        cuisine = [c.strip() for c in v.get("cuisine", "").split(";") if c.strip()]
+        address = " ".join(x for x in (v.get("addr:housenumber"), v.get("addr:street")) if x) or None
+        out.append({"id": f"osm-{v['osm'].replace('/', '-')}", "name": v["name"], "lat": v["lat"], "lng": v["lng"], "address": address,
+                    "categories": [kind, *cuisine], "price_level": None, "rating": None, "review_count": None,
+                    "open_hours": {"status_at_requested_time": osm_open_at(v.get("opening_hours"), q.time), "periods": None,
+                                   "timezone": "America/New_York", "source": "overpass"},
+                    "indoor_outdoor": "outdoor" if kind == "park" else "indoor",
+                    "walk_min": walk_estimate_minutes(q.lat, q.lng, v["lat"], v["lng"]), "walk_method": "straight_line_estimate",
+                    "source_refs": [{"source": "overpass", "external_id": v["osm"], "url": f"https://www.openstreetmap.org/{v['osm']}"}],
+                    "attributions": [{"source": "overpass", "text": "© OpenStreetMap contributors", "url": "https://www.openstreetmap.org/copyright"}],
+                    "momentum_delta": None, "momentum_meta": {"method": "unavailable", "label": None, "missing_reason": "no_velocity_data"}})
+    return out
 
 async def live_candidates(q: QueryInput) -> tuple[list[dict[str,Any]],bool]:
     key=os.getenv("GOOGLE_MAPS_API_KEY")
@@ -948,6 +1022,8 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     parsed=await parse_query_text(q.free_text)
     budget=parsed.get("budget",q.budget); walk=parsed.get("max_walk_min",q.max_walk_min)
     places,_=await live_candidates(q)
+    backup=not DEMO and not places  # Google unavailable (no key, quota, outage): fall back to the OSM snapshot, never mixed
+    if backup: places=osm_candidates(q)
     # Google Places coordinates must not go to a non-Google routing service (Maps ToS 3.2.3(a),(c)), so only
     # non-Google candidates are routed; Google venues keep the labeled straight-line estimate.
     to_route=[v for v in places if routable(v)]
@@ -961,7 +1037,9 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     for venue in places:
         if venue.get("lat") is None or venue.get("lng") is None: continue
         if venue.get("open_hours",{}).get("status_at_requested_time")!="open": continue
-        if venue.get("price_level") is None or venue["price_level"]>max_price: continue
+        # OSM has no price levels; backup venues stay eligible and the card says "price unknown".
+        if venue.get("price_level") is None and not backup: continue
+        if venue.get("price_level") is not None and venue["price_level"]>max_price: continue
         if not matches_category(venue,parsed.get("category")): continue
         pre_candidates.append(venue)
     # Walk-only searches skip the MBTA; otherwise check the T for places that are a long walk or beyond the limit.
@@ -994,7 +1072,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     candidates=candidates[:8]
     for c in candidates:
         c["explain_facts"]=explanation_facts(c)
-    used=["google_places","mbta","nws"]+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])
+    used=["google_places","mbta","nws"]+(["overpass"] if backup else [])+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"travel":q.travel,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates,"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")
