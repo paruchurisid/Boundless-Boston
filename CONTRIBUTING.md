@@ -2,7 +2,7 @@
 
 Start here. This page covers what the app does, how it fits together, how to ship a change, and where things stand. **Keep the Progress section current**: update it in the same PR as your change.
 
-_Last updated: 2026-11-21_ · **Live site:** https://bostonboundless.vercel.app · **API:** https://boundless-boston-api-5ze8.onrender.com
+_Last updated: 2026-11-21_ · **Live site:** Render static site `boundless-boston-web` (URL added after first deploy) · **API:** https://boundless-boston-api-5ze8.onrender.com
 
 ## What it does
 
@@ -11,7 +11,7 @@ You give it a place, a time, a budget and how far you'll walk. It returns 5–8 
 ## How it fits together
 
 ```text
-Browser (React + Vite)          Vercel: static frontend; proxies /api/* to Render
+Browser (React + Vite)          Render static site: CDN frontend; rewrites /api/* to the API
    │  same-origin /api
 FastAPI backend                 Render: backend/app/main.py
    │  every outbound call goes through request_json (retry, circuit breaker, SQLite cache)
@@ -39,7 +39,7 @@ The full design is in `docs/architecture/` (01–05). The source rules are in `d
 | Area | Owner | Files |
 |---|---|---|
 | **A: recommendation logic** | Teammate A | Filters, reach rules, scoring (`score_venue`, `make_query` logic), `scoring/weights.yaml` |
-| **B: platform and APIs** | Teammate B | Source adapters, `request_json`, CI, deploy (`render.yaml`, `vercel.json`) |
+| **B: platform and APIs** | Teammate B | Source adapters, `request_json`, CI, deploy (`render.yaml`) |
 
 If you need to change the other person's area, tell them first.
 
@@ -62,7 +62,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 3. **Open a PR** that says what changed, how you tested it, and the risks. CI runs pytest, the typecheck and the build.
 4. **Review**: get approval before merging. We squash-merge.
 5. **Deploy**:
-   - Vercel deploys the frontend on its own.
+   - Both the frontend and the API are in `render.yaml` (one Render Blueprint).
    - **Render auto-deploy is currently not firing**, so trigger a deploy from the Render dashboard (or through the Render MCP) after merging.
    - Check `https://boundless-boston-api-5ze8.onrender.com/api/sources/health`.
 
@@ -90,7 +90,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 - ✅ CI on PRs: pytest, typecheck and build (pnpm 10.34.9).
 - ✅ Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
-- ✅ Frontend on Vercel at https://bostonboundless.vercel.app, with `/api` proxied to Render. The Vercel Git integration deploys on its own. A second Vercel project named `backend` also exists; it's unused, since the API runs on Render.
+- 🟡 Frontend moving to a Render static site (`boundless-boston-web`); the Vercel projects were deleted.
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
 - ⬜ Tests cover opening hours, weather, events and the parser only; `main.py` is mostly untested.
 

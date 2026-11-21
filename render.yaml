@@ -23,3 +23,22 @@ services:
         sync: false
       - key: ORS_API_KEY
         sync: false
+
+  # Frontend: Vite build served from Render's CDN. Rewrites keep /api same-origin, so the browser never needs CORS.
+  - type: web
+    name: boundless-boston-web
+    runtime: static
+    buildCommand: npm install -g pnpm@10.34.9 && pnpm install --frozen-lockfile && pnpm build
+    staticPublishPath: dist
+    envVars:
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: NODE_VERSION
+        value: "20"
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://boundless-boston-api-5ze8.onrender.com/api/*
+      - type: rewrite
+        source: /*
+        destination: /index.html

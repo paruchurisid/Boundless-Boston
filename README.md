@@ -36,7 +36,7 @@ Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api
 ## Deploy
 
 - **API:** Render, from `render.yaml` (free web service, `APP_MODE=live`). Set `GOOGLE_MAPS_API_KEY` and `MBTA_API_KEY` in the Render dashboard. The free plan sleeps when idle, so the first request after a pause can take about a minute.
-- **Frontend:** Vercel. `vercel.json` proxies `/api/*` to `https://boundless-boston-api-5ze8.onrender.com`, so no CORS setup is needed.
+- **Frontend:** Render static site `boundless-boston-web` (also in `render.yaml`). A rewrite sends `/api/*` to `https://boundless-boston-api-5ze8.onrender.com`, so no CORS setup is needed.
 
 ## Neon
 
