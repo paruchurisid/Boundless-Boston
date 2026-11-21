@@ -6,33 +6,98 @@ _Last updated: 2026-11-21_ · **Live site:** https://boundless-boston-web-5ze8.o
 
 ## What it does
 
-You give it a place, a time, a budget and how far you'll walk. It returns 5–8 places that are **open then, within budget, and reachable there and back**, and it shows where every piece of data came from (live, cached, demo or unavailable). Fixture data is never shown as live.
+You give it a place, a time, a budget and how long you'll travel (walking, or walking + the T). It returns up to 8 places that are **open then, within budget, and reachable there and back**, and it shows where every piece of data came from (live, cached, demo or unavailable). Fixture data is never shown as live.
 
 ## How it fits together
 
 ```text
-Browser (React + Vite)          Render static site: CDN frontend; rewrites /api/* to the API
-   │  same-origin /api
-FastAPI backend                 Render: backend/app/main.py
-   │  every outbound call goes through request_json (retry, circuit breaker, SQLite cache)
-   ├─ Google Places     venues, ratings, hours, price
-   ├─ MBTA V3           stops, schedules, predictions → round-trip check
-   ├─ NWS               hourly weather (api.weather.gov)
-   ├─ Boston CKAN       311 requests and business licenses (neighborhood panel)
-   ├─ Gemini            free text → filters (falls back to rules)
-   ├─ OpenRouteService  street-routed walking minutes
-   └─ Ticketmaster      nearby events (branch built, waiting for key approval)
+  You (browser)
+      │  boundless-boston-web-5ze8.onrender.com   (React + Vite, Render static site)
+      │  /api/*  ──rewrite──▶  boundless-boston-api-5ze8.onrender.com
+      ▼
+  ┌───────────────────────── FastAPI backend (backend/app/main.py) ─────────────────────────┐
+  │  rate limit (30/min per visitor, 120/min site)  →  search pipeline  →  JSON + sources    │
+  │  every outside call goes through request_json: timeout · 1 retry · circuit breaker · cache│
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+      │
+      ├─ Places ......... Google Places (live)  ── if it returns nothing ──▶  OpenStreetMap snapshot (backup)
+      ├─ Transit ........ MBTA V3 (stop list fetched daily; nearest stops found locally)
+      ├─ Walking ........ OpenRouteService (non-Google venues only) · otherwise straight-line "(approx.)"
+      ├─ Weather ........ National Weather Service (api.weather.gov)
+      ├─ Events ......... Red Sox (MLB) + Bruins (NHL) home games  ·  Ticketmaster (pending approval)
+      ├─ Language ....... Gemini: typed request → filters; "Why this?" one-liner
+      └─ Neighborhood ... Boston Open Data (311 requests, business licenses)
 ```
 
-**One search, step by step:**
-1. **Parse** the free text into filters (Gemini, or the rule-based fallback).
-2. **Candidates**: Google Places, or fixtures in demo mode.
-3. **Hard filters**: open at the requested time, within budget, within walking range.
-4. **Reach**: MBTA round trip, or the walking fallback.
-5. **Score**: momentum, quality, reach, events and weather, using the weights in `scoring/weights.yaml`.
-6. **Return** the ranked list, the full score breakdown and `sources_used`.
+### One search, step by step
 
-The full design is in `docs/architecture/` (01–05). The source rules are in `docs/SOURCES.md`.
+```text
+ "cheap cocktails,       ┌─────────┐   ┌────────────┐   ┌──────────────┐   ┌───────┐   ┌──────────┐   ┌─────────┐
+  20 min, Walk + T"  ──▶ │ 1 PARSE │──▶│ 2 FIND     │──▶│ 3 HARD       │──▶│4 REACH│──▶│ 5 SCORE  │──▶│ 6 SHOW  │
+                         │ Gemini  │   │ Google or  │   │   FILTERS    │   │walk or│   │ 0–1 each │   │ top 8 + │
+                         │ → $ bar │   │ OSM backup │   │ open? budget?│   │ T trip│   │ weighted │   │ "Why?"  │
+                         │ 20 min  │   │ ≤20 places │   │ type?        │   │fits?  │   │ sum      │   │ sources │
+                         └─────────┘   └────────────┘   └──────────────┘   └───────┘   └──────────┘   └─────────┘
+```
+
+1. **Parse**: Gemini turns free text into filters (budget, minutes, type). If Gemini is off or fails, simple rules do it.
+2. **Find**: up to 20 nearby places from Google Places. If Google returns nothing (no key, quota, outage), the bundled OpenStreetMap snapshot is used instead, and the two are never mixed.
+3. **Hard filters** (pass or drop): open at the chosen time (unknown hours = dropped), price ≤ budget (OSM backup: price unknown is allowed), matches the type if one was asked for.
+4. **Reach** (pass or drop): see "How ranking works" below.
+5. **Score**: five parts, weighted (below).
+6. **Show**: the top 8 by score (ties go to the shorter walk), each with its full breakdown and data sources.
+
+## How ranking works
+
+### Step 1: who gets in (pass/fail)
+
+```text
+   all nearby places
+          │
+          ▼
+   ┌──────────────┐  no   ┌──────────────┐  no   ┌──────────────┐  no   ┌──────────────────────────────┐  no
+   │ open at that │──✗    │ within your  │──✗    │ right type   │──✗    │ you can get there AND back   │──✗
+   │ time?        │       │ budget?      │       │ (if asked)?  │       │ within your trip-time limit? │
+   └──────┬───────┘       └──────┬───────┘       └──────┬───────┘       └──────────────┬───────────────┘
+          │ yes                  │ yes                  │ yes                          │ yes
+          └──────────────────────┴──────────────────────┴──────────────────────────────▶  eligible → scored
+```
+
+**"Get there and back"** means one of:
+- **Walk**: the walk fits your limit (minutes, from OpenRouteService or the labeled straight-line estimate).
+- **Walk + T** (default): a single MBTA line where *walk to the stop + wait + ride + walk to the place* fits your limit, **and** a train runs back later that night (at least 1 h after you set out, before service ends). If walking and the T both work, the faster one wins. "Walk only" ignores the T.
+
+### Step 2: the score (0 to 1)
+
+Each eligible place gets five sub-scores between 0 and 1. The final score is their weighted average, with base weights from `scoring/weights.yaml`:
+
+| Part | Weight | What it measures | How |
+|---|---:|---|---|
+| **Momentum** | 30% | Is it getting popular? | Review growth over 30 days (max +10 → 1.0). *Not available in live mode, because Google's terms forbid storing review snapshots.* |
+| **Quality** | 30% | Is it good? | Rating adjusted for review count, so a 5.0 from 3 reviews doesn't beat a 4.6 from 5,000: `(n/(n+50))·rating + (50/(n+50))·median`, ÷ 5 |
+| **Reach** | 20% | How sure is the trip? | 1.0 = live MBTA prediction confirms the ride there · 0.5 = scheduled T trip or walking |
+| **Events** | 10% | Is something happening nearby? | Red Sox/Bruins home games within ½ mile, from 3 h before to 3 h after (3+ games → 1.0) |
+| **Weather** | 10% | Does the place suit the weather? | Rain ≥ 50% or below 40°F: indoor 1.0, outdoor 0.0. Otherwise everything 0.5 |
+
+**Missing data doesn't count against a place.** If a part has no data, its weight is set to 0 and the remaining weights are scaled up to total 100%:
+
+```text
+  base weights        momentum 30 │ quality 30 │ reach 20 │ events 10 │ weather 10
+  live (Google)       momentum  – │ quality 43 │ reach 29 │ events 14 │ weather 14     momentum missing
+  OSM backup          momentum  – │ quality  – │ reach 50 │ events 25 │ weather 25     no ratings either
+```
+
+### Worked example (live, 8 p.m., bars near North Station, Google over quota so OSM backup)
+
+```text
+  Sullivan's Tap      reach   0.50 × 50% = 0.250   (walkable)
+                      events  0.33 × 25% = 0.083   (Bruins vs Capitals at TD Garden, 7:00 PM, 1 of 3 → 0.33)
+                      weather 0.50 × 25% = 0.125   (clear, 53°F → neutral)
+                      ─────────────────────────────
+                      score            = 0.458  → shown as 46
+```
+
+Every card's **"Why this?"** shows exactly this breakdown: each part's value, its effective weight, its sources, and "not used (reason)" for parts without data.
 
 ## Who owns what
 
@@ -93,7 +158,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - ✅ Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
 - ✅ Frontend on a Render static site (`boundless-boston-web-5ze8`), with `/api/*` rewritten to the API (POST bodies and query strings pass through). It replaces Vercel.
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
-- ⬜ Tests cover opening hours, weather, events and the parser only; `main.py` is mostly untested.
+- ✅ Tests: 57 backend tests (hours, weather, events, parser, scoring, transit, OSM backup, rate limits) + 8 Playwright demo steps. Large parts of `main.py` (live adapters) are still only tested by hand.
 
 ### Google Maps terms
 
@@ -104,16 +169,16 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 ### Scoring (Area A)
 
-- ✅ Reach is a hard filter: walk **or** MBTA round trip, so transit-only places can rank. The MBTA search considers the 3 nearest stations plus the 2 nearest bus stops.
-- ✅ Components with no data get weight 0 and the rest are rescaled, so missing momentum or events no longer cap scores. Live scores now reach about 0.7–0.9.
-- ✅ "Live round trip" = live-predicted outbound + scheduled return.
-- ✅ Weights and thresholds load from `scoring/weights.yaml`; the quality prior uses the true median.
-- ⬜ Direct routes only (no transfers). The walk to and from stops isn't counted against the walk limit.
+- ✅ Reach is a hard filter: walk **or** a door-to-door T trip with a train back, within the trip-time limit; the faster wins. "Walk only" mode ignores the T.
+- ✅ T search: the 3 nearest stations plus the 2 nearest bus stops, subway first, at most 6 routes per place; line names and colors, plus the last train home on cards.
+- ✅ Parts with no data get weight 0 and the rest are rescaled (see "How ranking works").
+- ✅ Weights and thresholds load from `scoring/weights.yaml`; quality uses the true median.
+- ⬜ Direct lines only (no transfers).
 
 ### Up next
 
-1. Ticketmaster: test live and open the PR once the key is approved.
-1. Refresh the OSM snapshot now and then: `.venv/bin/python -I scripts/refresh_osm_snapshot.py` (public Overpass servers are slow; the script tiles and retries, and keeps the old file on failure).
-2. Move Gemini to the paid tier before launch (Places facts on the free tier; see Google Maps terms above).
-3. ✅ Rate limits: `/api/query`, `/api/recommendations` and `/api/explain` allow 30/min per visitor and 120/min site-wide (429 + Retry-After).
-4. Before launch: Google billing, consider moving Render to Virginia, and the security and accessibility checks in doc 05.
+1. Ticketmaster: test live and open the PR once the key is approved (adds concerts and shows on top of the Red Sox/Bruins games).
+2. Refresh the OSM snapshot now and then: `.venv/bin/python -I scripts/refresh_osm_snapshot.py` (public Overpass servers are slow; the script tiles and retries, and keeps the old file on failure).
+3. Move Gemini to the paid tier before launch (Places facts on the free tier; see Google Maps terms above).
+4. ✅ Rate limits: `/api/query`, `/api/recommendations` and `/api/explain` allow 30/min per visitor and 120/min site-wide (429 + Retry-After).
+5. Before launch: Google billing, consider moving Render to Virginia, and the security and accessibility checks in doc 05.
