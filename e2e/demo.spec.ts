@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// Follows the doc 05 demo script against demo fixtures (5 open, in-budget places within a 20-minute walk).
+// Follows the doc 05 demo script against demo fixtures: by default (Walk + T, 30 min door to door, $$) 8 places qualify,
+// 3 of them by T only (Pinocchio's via Red, Eventide via Green-D, Earls via Orange).
 const cards = (page: Page) => page.locator('article.venue-card');
 
 test.beforeEach(async ({ page }) => {
@@ -9,11 +10,13 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('loads demo results with sources labeled demo', async ({ page }) => {
-  await expect(cards(page)).toHaveCount(5);
+  await expect(cards(page)).toHaveCount(8);
   const sources = page.locator('.source-items');
   for (const name of ['Google Places', 'MBTA', 'Boston Open Data']) await expect(sources).toContainText(name);
   await expect(sources.locator('small', { hasText: 'demo' }).first()).toBeVisible();
   await expect(cards(page).first().locator('.score strong')).toHaveText(/^\d+$/);
+  // T-only places show their line pill (e.g. Red to Harvard).
+  await expect(cards(page).filter({ hasText: "Pinocchio's" }).locator('.line-pill')).toHaveText(/Red/);
 });
 
 test('Why this? shows the full score breakdown, including unused parts', async ({ page }) => {
@@ -37,8 +40,11 @@ test('rain lowers the outdoor park and lifts indoor places', async ({ page }) =>
 });
 
 test('a too-strict search shows the exact empty state', async ({ page }) => {
+  // The only $ pizza place (Pinocchio's) is T-only, so walk-only + 10 min leaves nothing.
+  await page.getByPlaceholder(/cheap ramen/).fill('pizza');
   await page.getByRole('button', { name: '$', exact: true }).click();
-  await page.locator('input[type=range]').fill('5');
+  await page.getByRole('button', { name: 'Walk only' }).click();
+  await page.locator('input[type=range]').fill('10');
   await page.getByRole('button', { name: /Find my night/ }).click();
   await expect(page.getByText('Nothing open and reachable at that time. Try an earlier hour or a higher budget.')).toBeVisible();
   await expect(cards(page)).toHaveCount(0);
