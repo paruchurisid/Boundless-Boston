@@ -6,7 +6,7 @@ This catalog defines intended source use. Current credentials, quotas, retention
 |---|---|---|---|---|---|
 | Google Places API (New) | 1; venue discovery/details, rating/count, price, hours, location, map URI | Required for live; server only | No disk cache for Places content; place_id may be retained indefinitely; coordinates only under provider exception, not cached here | Show Google Maps attribution with card content and render returned third-party attributions. Mark text `translate="no"`. Do not persist Places content or draw Places points on the OSM map; place IDs may be retained, and coordinate retention is not used by this app. | Boston venues with explicit DEMO provenance and synthetic IDs. |
 | MBTA V3 | 1; stops, predictions, schedules/last service, alerts | Optional | Predictions 30s (60s keyless); schedules/stops 6h (12h keyless); alerts 60s (2m keyless) | Link/credit MBTA; clearly timestamp transit status and distinguish prediction from schedule. | Deterministic stops, trips, last-service and alert scenarios. |
-| Open-Meteo | 1; temperature and precipitation | None | 10m, stale ≤2h | Credit Open-Meteo and link source. | Clear/rain/cold weather variants. |
+| National Weather Service (api.weather.gov) | 1; hourly temperature and precipitation chance (US only) | None; identifying User-Agent required | 10m, stale ≤2h | Credit the National Weather Service and link weather.gov. | Clear/rain/cold weather variants. |
 | data.boston.gov CKAN | 1; 311 last 90 days, business licenses, city contacts | None | Dynamic resource resolution; 1h; aggregate stale ≤24h | Credit City of Boston and link dataset. | 311 category, license, contacts fixtures with date window. |
 | Ticketmaster Discovery | 2; events within 0.5 mi, next 3h | Required | 10m, stale ≤1h | Required event/provider attribution and links; follow display terms. | Nearby event counts and examples labeled DEMO. |
 | Yelp Fusion | 2; cross-check/dedupe only by default | Required | 24h only if terms permit; no stale retention without compliance review | Yelp attribution/logo and display rules wherever content shown; avoid review text; honor content-use limitations. | Minimal IDs/names for dedupe fixtures, not copied user content. |
@@ -28,4 +28,5 @@ Google place data must preserve Google attribution wherever displayed; this UI u
 | Eventbrite public search | Public search scraping is not an approved integration path; Ticketmaster is selected for scoped event API. |
 | TikTok | No dependable, permitted venue/event data interface for this use. |
 | Instagram | Access and content reuse restrictions; not a reliable structured venue availability source. |
+| Open-Meteo | Replaced by NWS: its free tier returned HTTP 429 to Render's shared outbound IPs on every request. A paid Open-Meteo key would also work. |
 | Google Trends | Search interest is not venue-level current availability or trip feasibility; not needed for MVP scoring. |

@@ -5,7 +5,7 @@ All timestamps are RFC 3339 UTC. JSON numbers are finite; coordinates use WGS84 
 ## Unified domain types
 
 ```ts
- type SourceId = 'google_places'|'mbta'|'open_meteo'|'boston_ckan'|'ticketmaster'|'yelp'|'overpass'|'routing'|'gemini'|'census_acs';
+ type SourceId = 'google_places'|'mbta'|'nws'|'boston_ckan'|'ticketmaster'|'yelp'|'overpass'|'routing'|'gemini'|'census_acs';
  type SourceMode = 'live'|'cached'|'demo'|'disabled'|'open-circuit';
  type Attribution = {source: SourceId; text: string; url?: string; required_logo?: string; translate_no?: boolean};
  type SourceRef = {source: SourceId; external_id: string; url?: string};
@@ -59,11 +59,11 @@ quality: {prior_reviews_m: 50, prior_rating_c: candidate_median_rating, rating_m
 momentum: {window_days: 30, source_priority: [google_places], snapshot_fallback_label: 'approx.'}
 reach: {mbta_round_trip: 1.0, walking_fallback: 0.5, unreachable: 0.0}
 events: {radius_m: 804.672, horizon_hours: 3, saturation_count: 3}
-weather: {default: 0.5, precipitation_threshold_mm: 0.0, cold_threshold_f: 40, indoor_adverse: 1.0, outdoor_adverse: 0.0, neutral_type: 0.5}
+weather: {default: 0.5, precipitation_chance_threshold_pct: 50, cold_threshold_f: 40, indoor_adverse: 1.0, outdoor_adverse: 0.0, neutral_type: 0.5}
 ```
 
 At runtime `candidate_median_rating` is the median of non-null eligible candidate ratings, or 3.0 if none; clamp all normalized components to `[0,1]`. Momentum is review-count delta in the last 30 days normalized as `min(1, max(0, delta)/10)` only where the source contract permits retaining the dated inputs. Google Places content is not persisted by this implementation, so Google review snapshots are disabled; its momentum is 0 with reason `google_review_velocity_not_persisted_for_provider_compliance`. If a future provider explicitly exposes dated velocity, mark it `approx.` and return the timestamped raw inputs. If no permitted velocity exists, momentum is 0 with reason `no_velocity_data`; the component is labeled as missing rather than `approx.`. In demo mode, fixture velocity remains labeled `demo`.
 
-Bayesian quality: `R'=(v/(v+m))*R + (m/(v+m))*C`, `m=50`, `C=median eligible candidate rating`; `quality=R'/5`. If rating/review count unavailable, use component 0.5 with missing-data reason and no invented raw rating. Reach is 1.0 only when live predictions confirm paired outbound and return trips; 0.5 when a same-route scheduled pair confirms a return before the last scheduled service window or the venue is reachable by walking fallback; else 0.0. The score's raw method identifies `predicted_round_trip`, `scheduled_round_trip`, or `walking_fallback`; scheduled and walking plans are not presented as live predictions. Events=`min(1,count/3)`. If event provider is unavailable, use 0 and label unknown source (never describe as zero events). Weather starts at 0.5; if precipitation >0 mm or temp <40°F, indoor=1, outdoor=0, mixed/unknown=0.5. Weather override changes the effective weather input and must be shown in raw inputs.
+Bayesian quality: `R'=(v/(v+m))*R + (m/(v+m))*C`, `m=50`, `C=median eligible candidate rating`; `quality=R'/5`. If rating/review count unavailable, use component 0.5 with missing-data reason and no invented raw rating. Reach is 1.0 only when live predictions confirm paired outbound and return trips; 0.5 when a same-route scheduled pair confirms a return before the last scheduled service window or the venue is reachable by walking fallback; else 0.0. The score's raw method identifies `predicted_round_trip`, `scheduled_round_trip`, or `walking_fallback`; scheduled and walking plans are not presented as live predictions. Events=`min(1,count/3)`. If event provider is unavailable, use 0 and label unknown source (never describe as zero events). Weather starts at 0.5; if precipitation chance ≥50% or temp <40°F, indoor=1, outdoor=0, mixed/unknown=0.5. Weather override changes the effective weather input and must be shown in raw inputs.
 
 Final `score = .30*momentum + .30*quality + .20*reach + .10*events + .10*weather`. Round only for display (2 decimals); preserve full precision in API. Every component has `{value,weight,raw,sources,method,label?,missing_reason?}`. Explanation text must cite only returned breakdown values.

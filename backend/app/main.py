@@ -30,12 +30,12 @@ with sqlite3.connect(DB_PATH) as _db:
 app = FastAPI(title="Boundless Boston Navigator API", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173").split(","), allow_methods=["GET", "POST"], allow_headers=["Content-Type"])
 
-SOURCES = ["google_places", "mbta", "open_meteo", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "gemini", "census_acs"]
+SOURCES = ["google_places", "mbta", "nws", "boston_ckan", "ticketmaster", "yelp", "overpass", "routing", "gemini", "census_acs"]
 HEALTH: dict[str, dict[str, Any]] = {s: {"source": s, "status": "demo" if DEMO and s in SOURCES[:4] else "disabled", "checked_at": None, "last_success_at": None, "cache_age_s": None, "detail": "Fixture mode" if DEMO and s in SOURCES[:4] else "Not configured"} for s in SOURCES}
 FAILURES: dict[str, int] = {s: 0 for s in SOURCES}
 OPEN_UNTIL: dict[str, float] = {}
 HALF_OPEN_PROBES: set[str] = set()
-TTL = {"google_places": 300, "mbta": 60, "open_meteo": 600, "boston_ckan": 3600}
+TTL = {"google_places": 300, "mbta": 60, "nws": 600, "boston_ckan": 3600}
 CKAN_BASE = os.getenv("BOSTON_CKAN_URL", "https://data.boston.gov/api/3/action")
 MBTA_BASE = "https://api-v3.mbta.com"
 CKAN_RESOURCES: dict[str, dict[str, Any]] = {}
@@ -85,7 +85,7 @@ def source_use(source: str, status: str | None = None) -> dict[str, Any]:
     attributions = {
         "google_places": [{"source": source, "text": "Google Maps", "url": "https://maps.google.com", "required_logo": "Google Maps", "translate_no": True}],
         "mbta": [{"source": source, "text": "MBTA V3 API", "url": "https://api-v3.mbta.com/"}],
-        "open_meteo": [{"source": source, "text": "Weather data by Open-Meteo", "url": "https://open-meteo.com/"}],
+        "nws": [{"source": source, "text": "Weather data by the National Weather Service", "url": "https://www.weather.gov/"}],
         "boston_ckan": [{"source": source, "text": "City of Boston Open Data", "url": "https://data.boston.gov/"}],
     }
     return {"source": source, "status": status or h["status"], "observed_at": h["last_success_at"], "cache_age_s": h["cache_age_s"], "attribution": attributions.get(source, [])}
@@ -210,9 +210,9 @@ def score_venue(v: dict[str,Any], median: float, weather: dict[str,Any], reach: 
     quality=.5 if rating is None else (((reviews/(reviews+50))*rating+(50/(reviews+50))*median)/5 if reviews+50 else rating/5)
     reach_value=float(reach.get("reach_value", 0.0))
     events=0.0
-    adverse=(weather.get("precipitation_mm") or 0)>0 or (weather.get("temperature_f") is not None and weather["temperature_f"]<40)
+    adverse=(weather.get("precipitation_chance_pct") or 0)>=50 or (weather.get("temperature_f") is not None and weather["temperature_f"]<40)
     mood=1.0 if (adverse and v["indoor_outdoor"]=="indoor") else (0.0 if adverse and v["indoor_outdoor"]=="outdoor" else .5)
-    components={"momentum":{"value":momentum,"weight":.3,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},"quality":{"value":quality,"weight":.3,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":50,"prior_rating":median},"sources":["google_places"]},"reach":{"value":reach_value,"weight":.2,"raw":reach,"sources":["mbta"]},"events":{"value":events,"weight":.1,"raw":{"nearby_events":None},"sources":["ticketmaster"],"missing_reason":"Tier 2 not configured"},"weather":{"value":mood,"weight":.1,"raw":weather,"sources":["open_meteo"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_mm") is None else None}}
+    components={"momentum":{"value":momentum,"weight":.3,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},"quality":{"value":quality,"weight":.3,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":50,"prior_rating":median},"sources":["google_places"]},"reach":{"value":reach_value,"weight":.2,"raw":reach,"sources":["mbta"]},"events":{"value":events,"weight":.1,"raw":{"nearby_events":None},"sources":["ticketmaster"],"missing_reason":"Tier 2 not configured"},"weather":{"value":mood,"weight":.1,"raw":weather,"sources":["nws"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_chance_pct") is None else None}}
     total=sum(c["value"]*c["weight"] for c in components.values())
     return {"value":round(total,4),"components":components}
 
@@ -641,26 +641,40 @@ async def live_neighborhood(lat: float, lng: float, radius_m: int) -> dict[str, 
                                "business_licenses": "available" if licenses is not None else "unavailable"},
             "city_contacts": contact}
 
+NWS_BASE = "https://api.weather.gov"
+# NWS requires an identifying User-Agent; the repo URL is the contact.
+NWS_HEADERS = {"User-Agent": "BoundlessBostonNavigator (https://github.com/paruchurisid/Boundless-Boston)", "Accept": "application/geo+json"}
+
+def nws_period_at(data: dict[str, Any] | None, target: datetime) -> dict[str, Any] | None:
+    """The hourly NWS forecast period covering target, as temperature_f and precipitation_chance_pct."""
+    for period in (data or {}).get("properties", {}).get("periods", []):
+        try:
+            begins, ends = datetime.fromisoformat(period["startTime"]), datetime.fromisoformat(period["endTime"])
+            temp = float(period["temperature"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if begins <= target < ends:
+            if period.get("temperatureUnit") == "C":
+                temp = temp * 9 / 5 + 32
+            chance = (period.get("probabilityOfPrecipitation") or {}).get("value")
+            return {"temperature_f": temp, "precipitation_chance_pct": chance, "forecast_for": period["startTime"], "source": "nws"}
+    return None
+
 async def forecast_for_query(q: QueryInput) -> dict[str, Any]:
     if DEMO:
-        result = {"temperature_f": 55.0, "precipitation_mm": 0.0, "source": "demo_fixture"}
+        result = {"temperature_f": 55.0, "precipitation_chance_pct": 0, "source": "demo_fixture"}
     else:
-        params = {"latitude": q.lat, "longitude": q.lng, "hourly": "temperature_2m,precipitation",
-                  "forecast_days": 2, "timezone": "America/New_York", "temperature_unit": "fahrenheit"}
-        data = await request_json("open_meteo", "https://api.open-meteo.com/v1/forecast", params)
-        hourly = (data or {}).get("hourly", {})
-        times = hourly.get("time", [])
-        target = q.time.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%dT%H:00")
-        try:
-            index = times.index(target)
-            result = {"temperature_f": hourly["temperature_2m"][index], "precipitation_mm": hourly["precipitation"][index],
-                      "forecast_for": target, "source": "open_meteo"}
-        except (ValueError, KeyError, IndexError, TypeError):
-            result = {"temperature_f": None, "precipitation_mm": None, "forecast_for": target, "source": "unavailable"}
-            if HEALTH["open_meteo"]["status"] not in ("disabled", "open-circuit"):
-                HEALTH["open_meteo"].update(status="disabled", detail="Forecast hour unavailable")
+        # NWS redirects coordinates with more than 4 decimals, so round first.
+        point = await request_json("nws", f"{NWS_BASE}/points/{q.lat:.4f},{q.lng:.4f}", headers=NWS_HEADERS)
+        hourly_url = (point or {}).get("properties", {}).get("forecastHourly")
+        data = await request_json("nws", hourly_url, headers=NWS_HEADERS) if hourly_url else None
+        result = nws_period_at(data, q.time)
+        if result is None:
+            result = {"temperature_f": None, "precipitation_chance_pct": None, "forecast_for": q.time.isoformat(), "source": "unavailable"}
+            if HEALTH["nws"]["status"] not in ("disabled", "open-circuit"):
+                HEALTH["nws"].update(status="disabled", detail="Forecast hour unavailable")
     if q.weather_override == "rain":
-        result["precipitation_mm"] = max(float(result.get("precipitation_mm") or 0), 2.5)
+        result["precipitation_chance_pct"] = 100
         result["override"] = "rain"
     elif q.weather_override == "cold":
         result["temperature_f"] = min(float(result.get("temperature_f") or 40), 35.0)
@@ -706,7 +720,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
                            "explanation":f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled.",
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
-    used=["google_places","mbta","open_meteo"]
+    used=["google_places","mbta","nws"]
     return envelope({"query":{"time":q.time.isoformat(),"budget":budget,"lat":q.lat,"lng":q.lng,"max_walk_min":walk,"free_text":q.free_text,"parsed_filters":parsed,"weather_override":q.weather_override},"recommendations":candidates[:8],"empty_message":None if candidates else "Nothing open and reachable at that time. Try an earlier hour or a higher budget.","weather":weather},used)
 
 @app.on_event("startup")

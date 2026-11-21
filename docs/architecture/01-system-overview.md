@@ -25,7 +25,7 @@ Boundless Boston Navigator produces a short list of places that fit a requested 
        │ Tier 1        │    │ Tier 2       │    │ Tier 3          │
        │ Google Places │    │ Ticketmaster │    │ Census ACS      │
        │ MBTA          │    │ Yelp         │    │ stretch only    │
-       │ Open-Meteo    │    │ Overpass     │    └─────────────────┘
+       │ NWS weather   │    │ Overpass     │    └─────────────────┘
        │ Boston CKAN   │    │ routing/LLM  │
        └───────┬──────┘    └───────┬──────┘
                └──────────────────┬┘
@@ -41,7 +41,7 @@ OSM map tiles are a browser rendering dependency governed by the tile provider's
 
 ## Tier gates and delivery rule
 
-**Tier 1 is the demo-critical system.** It comprises Google Places, MBTA V3, Open-Meteo, and Boston CKAN. Each adapter must have a working live path when configured, a zero-key fixture path, attribution, normalized contracts, and failure/degradation behavior. “100% green” means all Tier 1 acceptance checks in `05-test-and-demo-plan.md` pass, including each source's no-key fixture scenario and killed-source resilience. Do not start Tier 2 integration until that gate passes.
+**Tier 1 is the demo-critical system.** It comprises Google Places, MBTA V3, National Weather Service, and Boston CKAN. Each adapter must have a working live path when configured, a zero-key fixture path, attribution, normalized contracts, and failure/degradation behavior. “100% green” means all Tier 1 acceptance checks in `05-test-and-demo-plan.md` pass, including each source's no-key fixture scenario and killed-source resilience. Do not start Tier 2 integration until that gate passes.
 
 The project has a hard hour-10 cutover: at hour 10 from implementation start, if Tier 1 is not 100% green, freeze Tier 1 scope and spend all remaining implementation time on Tier 1 stabilization, integration, demo behavior, and tests. Tier 2 must not be touched in that case. If Tier 1 is green by hour 10, Tier 2 may be attempted in the remaining planned window; this does not relax Tier 1 stability. Tier 3 remains stretch scope.
 
@@ -65,7 +65,7 @@ Dependency direction is one-way: UI → BFF contracts → domain services → so
 |---|---|---|---|---|
 | Google Places | Do not disk-cache Places content; use demo fixture only in demo mode, otherwise no Google candidates | Same as failure; source `disabled` in production | No Google content cache; fixture only in demo mode; `open-circuit` state exposed | No live candidate discovery. Do not fabricate Google ratings/hours. If no other candidate source is enabled, return empty state. |
 | MBTA | Serve cache or fixture; mark reach estimate and age | Keyless mode uses aggressive cache and public V3 endpoints; no key is not itself disabled | Use valid cache/fixture; otherwise reach unknown | A 1.0 reach score requires paired real-time predictions; a validated same-route scheduled round trip or walk fallback is labeled separately at 0.5. If neither can be established, exclude the venue. |
-| Open-Meteo | Cache or fixture; otherwise weather component `0.5`, labeled default | No key needed | Cache/fixture or neutral `0.5` | Weather does not block recommendations; expose unavailable source. |
+| National Weather Service | Cache or fixture; otherwise weather component `0.5`, labeled default | No key needed | Cache/fixture or neutral `0.5` | Weather does not block recommendations; expose unavailable source. |
 | Boston CKAN | Cache or fixture for neighborhood; otherwise neighborhood section unavailable | No key needed | Cache/fixture or section unavailable | Core venue recommendations remain available; no invented 311/license/contact summary. |
 | Ticketmaster | Cache/fixture or events count 0 with source unavailable (never claim verified zero if fetch failed) | Disabled; event count unknown and events component neutral 0 unless product config explicitly defines otherwise | Same | Tier 2 only; recommendation continues, events contribution uses documented missing-data policy. |
 | Yelp | Cache where policy allows; otherwise omit cross-check | Disabled; omit | Omit | Never block Google candidate; no Yelp content shown without compliance metadata. |
