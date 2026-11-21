@@ -4,6 +4,6 @@
   "outputDirectory": "dist",
   "installCommand": "pnpm install --frozen-lockfile",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://YOUR_API_HOST/api/$1" }
+    { "source": "/api/(.*)", "destination": "https://boundless-boston-api.onrender.com/api/$1" }
   ]
 }

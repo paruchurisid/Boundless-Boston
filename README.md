@@ -31,6 +31,11 @@ Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api
 
 `APP_MODE=demo` is the default and uses clearly labeled synthetic fixtures. Live mode is opt-in with `APP_MODE=live`. Live Tier 1 paths are implemented for Google Places, MBTA stops/routes/schedules/predictions/alerts, Open-Meteo hourly forecasts, and Boston CKAN 311 and active food-establishment license data. Boston CKAN resource IDs are discovered dynamically with `package_show`. Transit eligibility uses paired scheduled trips, with prediction confirmation where available, or an explicitly approximate walking fallback. Google Places requires `GOOGLE_MAPS_API_KEY`; without it, live mode returns no Google candidates instead of substituting fixtures. Set `BOSTON_311_PACKAGE` and `BOSTON_LICENSE_PACKAGE` to override the CKAN package slugs. Live adapter acceptance still needs to run against the configured credentials and current source quotas before production use. Tier 2 event, routing, Yelp, and LLM integrations remain out of scope for this Tier 1 pass.
 
+## Deploy
+
+- **API:** Render, from `render.yaml` (free web service, `APP_MODE=live`). Set `GOOGLE_MAPS_API_KEY` and `MBTA_API_KEY` in the Render dashboard. The free plan sleeps when idle, so the first request after a pause can take about a minute.
+- **Frontend:** Vercel. `vercel.json` proxies `/api/*` to `https://boundless-boston-api.onrender.com`, so no CORS setup is needed.
+
 ## Neon
 
 `neon.ts` remains the Neon project configuration. The application API is FastAPI and needs a Python 3.12 runtime; it is not packaged as a Neon Function. Deploying the database/service requires a configured Neon project and a compatible Python hosting target. No credentials or deployment identifiers belong in the frontend bundle.

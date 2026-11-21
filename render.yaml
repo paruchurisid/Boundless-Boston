@@ -1,0 +1,21 @@
+# Render Blueprint for the FastAPI backend. Vercel serves the frontend and proxies /api here.
+services:
+  - type: web
+    name: boundless-boston-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: APP_MODE
+        value: live
+      # shortcut: free-plan disk is wiped on each deploy/restart, so the cache starts cold; add a Render disk if warm cache matters.
+      - key: CACHE_DB
+        value: /tmp/public-cache.sqlite3
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: MBTA_API_KEY
+        sync: false
