@@ -42,3 +42,17 @@ def test_only_known_non_google_venues_are_routable():
     assert not m.routable({"source_refs": [{"source": "overpass"}, {"source": "google_places"}]})  # merged duplicate
     assert not m.routable({}) and not m.routable({"source_refs": None}) and not m.routable({"source_refs": []})
     assert m.routable({"source_refs": [{"source": "overpass", "external_id": "node/1"}]})
+
+
+def test_upstream_reason_names_the_google_quota_without_secrets():
+    import httpx
+    body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": "Quota exceeded for consumer 'projects/123'",
+                      "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED",
+                                   "metadata": {"quota_metric": "places.googleapis.com/search_nearby_requests",
+                                                "quota_limit": "SearchNearbyRequestsPerDay", "consumer": "projects/123"}}]}}
+    reason = m.upstream_reason(httpx.Response(429, json=body))
+    assert reason == "RESOURCE_EXHAUSTED RATE_LIMIT_EXCEEDED places.googleapis.com/search_nearby_requests SearchNearbyRequestsPerDay"
+    assert "projects/123" not in reason
+    assert m.upstream_reason(httpx.Response(503, text="<html>oops</html>")) == ""
+    for odd in ({"error": {"details": True}}, {"error": {"details": [{"metadata": "x"}]}}, {"error": "string"}, [1, 2]):
+        assert m.upstream_reason(httpx.Response(500, json=odd)) == ""

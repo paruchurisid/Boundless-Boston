@@ -58,7 +58,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 ## How to ship a change
 
 1. **Branch** off `main` (`a/...` or `b/...`). Never push to `main`.
-2. **Test**: `cd backend && ../.venv/bin/python -m pytest -q`, plus `pnpm typecheck && pnpm build`. Add a small test for new logic.
+2. **Test**: `cd backend && ../.venv/bin/python -m pytest -q`, plus `pnpm typecheck && pnpm build`, plus `pnpm e2e` (a Playwright demo walkthrough in demo mode; first run `pnpm exec playwright install chromium`). Add a small test for new logic.
 3. **Open a PR** that says what changed, how you tested it, and the risks. CI runs pytest, the typecheck and the build.
 4. **Review**: get approval before merging. We squash-merge.
 5. **Deploy**:
@@ -88,7 +88,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 ### Platform
 
-- ✅ CI on PRs: pytest, typecheck and build (pnpm 10.34.9).
+- ✅ CI on PRs: pytest, typecheck, build, and a Playwright demo walkthrough (`e2e/demo.spec.ts`, demo fixtures, no keys).
 - ✅ Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
 - ✅ Frontend on a Render static site (`boundless-boston-web-5ze8`), with `/api/*` rewritten to the API (POST bodies and query strings pass through). It replaces Vercel.
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.

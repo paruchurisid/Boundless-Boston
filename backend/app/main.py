@@ -159,6 +159,18 @@ def normalized_params(params: dict[str, Any]) -> dict[str, Any]:
         if k in result: result[k] = round(float(result[k]), 4)
     return result
 
+def upstream_reason(response: httpx.Response) -> str:
+    """Short, non-secret reason from a Google-style error body (status, ErrorInfo reason, quota names); '' otherwise."""
+    try:
+        err = response.json()["error"]
+        parts = [str(err.get("status") or "")]
+        for detail in err.get("details") or []:
+            meta = detail.get("metadata") or {}
+            parts += [str(detail.get("reason") or ""), str(meta.get("quota_metric") or ""), str(meta.get("quota_limit") or "")]
+    except Exception:  # display-only: a malformed body must never break request_json or its breaker bookkeeping
+        return ""
+    return " ".join(p for p in parts if p)[:160]
+
 async def request_json(source: str, url: str, params: dict[str, Any] | None = None,
                        headers: dict[str, str] | None = None, method: str = "GET",
                        json_body: dict[str, Any] | None = None, timeout: float = 4.0) -> Any | None:
@@ -182,12 +194,14 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
             return None
         HALF_OPEN_PROBES.add(source)
     retryable_status = False
-    last_code = None
+    last_code, last_reason = None, ""
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as client:
                 response = await client.request(method, url, params=params, headers=headers, json=json_body)
             last_code = response.status_code
+            if response.status_code >= 400:
+                last_reason = upstream_reason(response)
             retryable_status = response.status_code == 429 or response.status_code >= 500
             if retryable_status and attempt == 0:
                 await asyncio.sleep(random.uniform(0.1, 0.4))
@@ -214,7 +228,7 @@ async def request_json(source: str, url: str, params: dict[str, Any] | None = No
             break
     FAILURES[source] += 1
     HALF_OPEN_PROBES.discard(source)
-    status = ("upstream unavailable" if retryable_status else "upstream request failed") + (f" (HTTP {last_code})" if last_code else " (no response)")
+    status = ("upstream unavailable" if retryable_status else "upstream request failed") + (f" (HTTP {last_code}{': ' + last_reason if last_reason else ''})" if last_code else " (no response)")
     HEALTH[source].update(status="disabled", checked_at=now_iso(), detail=status)
     if FAILURES[source] >= 3:
         OPEN_UNTIL[source] = clock.time() + 60
