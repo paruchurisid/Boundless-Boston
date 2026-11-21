@@ -42,6 +42,36 @@ HALF_OPEN_PROBES: set[str] = set()
 TTL = {"google_places": 300, "mbta": 60, "nws": 600, "boston_ckan": 3600}
 CKAN_BASE = os.getenv("BOSTON_CKAN_URL", "https://data.boston.gov/api/3/action")
 MBTA_BASE = "https://api-v3.mbta.com"
+# Riders say "Green Line D", not "Green-D": Boston line names with the MBTA's official line colors.
+MBTA_LINES = {"Red": ("Red Line", "#DA291C"), "Mattapan": ("Mattapan Trolley", "#DA291C"), "Orange": ("Orange Line", "#ED8B00"),
+              "Blue": ("Blue Line", "#003DA5"), **{f"Green-{b}": (f"Green Line {b}", "#00843D") for b in "BCDE"}}
+SILVER_LINES = {"741": "SL1", "742": "SL2", "743": "SL3", "751": "SL4", "749": "SL5", "746": "SLW"}
+MODE_RANK = {"subway": 0, "silver": 1, "bus": 2, "commuter_rail": 3, "ferry": 4}  # prefer the T over buses, buses over Commuter Rail
+MBTA_MAX_ROUTE_TRIES = 6  # each route tried costs ~8 MBTA calls; stay well under the rate limit
+MIN_STAY = timedelta(hours=1)  # earliest return considered after setting out
+
+def mbta_line(route_id: str) -> dict[str, str]:
+    if route_id in MBTA_LINES:
+        (name, color), mode = MBTA_LINES[route_id], "subway"
+    elif route_id in SILVER_LINES:
+        name, color, mode = f"Silver Line {SILVER_LINES[route_id]}", "#7C878E", "silver"
+    elif route_id.startswith("CR-"):
+        name, color, mode = f"{route_id[3:].replace('-', ' ')} Line (Commuter Rail)", "#80276C", "commuter_rail"
+    elif route_id.startswith("Boat-"):
+        name, color, mode = "MBTA Ferry", "#008EAA", "ferry"
+    elif route_id.startswith("Shuttle"):
+        name, color, mode = "Shuttle bus", "#FFC72C", "bus"
+    else:
+        name, color, mode = f"Bus {route_id}", "#FFC72C", "bus"
+    return {"id": route_id, "name": name, "color": color, "mode": mode}
+
+def mbta_service_end(t: datetime) -> datetime:
+    """End of the MBTA service day containing t; service days run 03:00 to 02:59 next morning."""
+    zone = ZoneInfo("America/New_York")
+    local = t.astimezone(zone)
+    day = local.date() - timedelta(days=1) if local.hour < 3 else local.date()
+    return datetime.combine(day + timedelta(days=1), datetime.min.time(), zone).replace(hour=3)
+
 CKAN_RESOURCES: dict[str, dict[str, Any]] = {}
 CKAN_RESOLVED_AT = 0.0
 
@@ -80,7 +110,16 @@ FIXTURES = [
  {"id":"demo-noodle","name":"Pho Pasteur","lat":42.3512,"lng":-71.0629,"address":"682 Washington St, Boston","categories":["vietnamese","noodles"],"price_level":1,"rating":4.1,"review_count":980,"open_hours":{"status_at_requested_time":"open"},"indoor_outdoor":"indoor","walk_min":14,"source_refs":[{"source":"google_places","external_id":"demo-pho"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":8},
  {"id":"demo-public-garden","name":"Boston Public Garden","lat":42.3540,"lng":-71.0700,"address":"4 Charles St, Boston","categories":["park","outdoors"],"price_level":1,"rating":4.8,"review_count":5200,"open_hours":{"status_at_requested_time":"open"},"indoor_outdoor":"outdoor","walk_min":10,"source_refs":[{"source":"google_places","external_id":"demo-garden"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":10},
  {"id":"demo-restaurant","name":"Union Oyster House","lat":42.3610,"lng":-71.0562,"address":"41 Union St, Boston","categories":["seafood","restaurant"],"price_level":3,"rating":4.2,"review_count":2100,"open_hours":{"status_at_requested_time":"closed"},"indoor_outdoor":"indoor","walk_min":17,"source_refs":[{"source":"google_places","external_id":"demo-union"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":2},
+ {"id":"demo-pinocchios","name":"Pinocchio's Pizza & Subs","lat":42.3721,"lng":-71.1206,"address":"74 Winthrop St, Cambridge","categories":["pizza","restaurant"],"price_level":1,"rating":4.5,"review_count":1300,"open_hours":{"status_at_requested_time":"open"},"indoor_outdoor":"indoor","walk_min":72,"source_refs":[{"source":"google_places","external_id":"demo-pinocchios"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":6},
+ {"id":"demo-eventide","name":"Eventide Fenway","lat":42.3448,"lng":-71.0995,"address":"1321 Boylston St, Boston","categories":["seafood","restaurant"],"price_level":2,"rating":4.4,"review_count":900,"open_hours":{"status_at_requested_time":"open"},"indoor_outdoor":"indoor","walk_min":46,"source_refs":[{"source":"google_places","external_id":"demo-eventide"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":5},
+ {"id":"demo-earls","name":"Earls Kitchen + Bar Assembly Row","lat":42.3925,"lng":-71.0790,"address":"450 Artisan Way, Somerville","categories":["restaurant","bar"],"price_level":2,"rating":4.3,"review_count":2500,"open_hours":{"status_at_requested_time":"open"},"indoor_outdoor":"indoor","walk_min":61,"source_refs":[{"source":"google_places","external_id":"demo-earls"}],"attributions":[{"source":"google_places","text":"Demo venue data · Google Places attribution required in live mode","translate_no":True}],"momentum_delta":3},
 ]
+# Demo-mode T trips for the fixture venues beyond walking range: (from stop, to stop, route, ride minutes, last train back, local time).
+DEMO_TRANSIT = {
+    "demo-pinocchios": ("Park Street", "Harvard", "Red", 13, (0, 47)),
+    "demo-eventide": ("Park Street", "Fenway", "Green-D", 14, (0, 41)),
+    "demo-earls": ("Downtown Crossing", "Assembly", "Orange", 12, (0, 38)),
+}
 
 
 def now_iso() -> str: return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -251,12 +290,27 @@ class ExplainInput(BaseModel):
     rain_chance_pct: int | None = Field(default=None, ge=0, le=100)
     nearby_events: int | None = Field(default=None, ge=0)
 
+def local_clock(iso: str) -> str:
+    t = datetime.fromisoformat(iso).astimezone(ZoneInfo("America/New_York"))
+    return t.strftime("%I:%M %p").lstrip("0")
+
+def transit_summary(reach: dict[str, Any]) -> str | None:
+    """'Red Line, Park Street to Harvard; last train back 12:47 AM', from the plan's own fields only."""
+    out = reach.get("outbound")
+    if not out or not out.get("line"):
+        return None
+    text = f"{out['line']['name']}, {out['from_stop']} to {out['to_stop']}"
+    last = reach.get("last_return")
+    if last:
+        text += f"; {'last train back' if last.get('last_of_night') else 'latest train back'} {local_clock(last['depart_at'])}"
+    return text
+
 def explanation_facts(rec: dict[str, Any]) -> dict[str, Any]:
     v, comps = rec["venue"], rec["score"]["components"]
     weather = comps["weather"]["raw"]
     return {"id": v["id"], "name": v["name"][:120], "categories": [str(c)[:40] for c in v.get("categories", [])[:3]], "rating": v.get("rating"),
             "review_count": v.get("review_count"), "price": "$" * v["price_level"] if v.get("price_level") else None,
-            "walk_min": v.get("walk_min"), "transit": rec["reachability"].get("label"),
+            "walk_min": v.get("walk_min"), "transit": (transit_summary(rec["reachability"]) or rec["reachability"].get("label") or "")[:120] or None,
             "temperature_f": weather.get("temperature_f"), "rain_chance_pct": weather.get("precipitation_chance_pct"),
             "nearby_events": comps["events"]["raw"].get("nearby_events")}
 
@@ -561,65 +615,95 @@ async def mbta_route_alerts(stop_id: str, route_id: str) -> list[dict[str, Any]]
     data=await request_json("mbta",f"{MBTA_BASE}/alerts",params,headers=headers)
     return (data or {}).get("data",[])
 
+def round_trip_plan(route_id: str, origin: str, destination: str, out: tuple[datetime, datetime], back: tuple[datetime, datetime],
+                    last: tuple[datetime, datetime], last_of_night: bool, live: bool, label: str | None = None) -> dict[str, Any]:
+    """One shape for live and demo plans: Boston line info, both legs, and the latest train back."""
+    line = mbta_line(route_id)
+    def leg(a: str, b: str, times: tuple[datetime, datetime]) -> dict[str, Any]:
+        return {"from_stop": a, "to_stop": b, "route": route_id, "line": line, "depart_at": times[0].isoformat(), "arrive_at": times[1].isoformat()}
+    return {"reachable": True, "reach_value": 1.0 if live else 0.5, "method": "predicted_round_trip" if live else "scheduled_round_trip",
+            "line": line, "outbound": leg(origin, destination, out), "return": {**leg(destination, origin, back), "before_last_service": True},
+            # last_of_night: the search window reached the end of the MBTA service day, so this really is the last train back.
+            "last_return": {**leg(destination, origin, last), "last_of_night": last_of_night},
+            "label": label or ("Live departure and scheduled return" if live else "Scheduled round trip; prediction unavailable")}
+
+NO_TRANSIT = {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None}
+
+def demo_round_trip(q: QueryInput, venue: dict[str, Any]) -> dict[str, Any]:
+    trip = DEMO_TRANSIT.get(venue["id"])
+    if not trip:
+        return {**NO_TRANSIT, "label": "Demo transit fixtures; walking estimate used"}
+    origin, destination, route_id, ride, (hour, minute) = trip
+    service_end = mbta_service_end(q.time)
+    last_depart = service_end.replace(hour=hour, minute=minute)  # service_end is 03:00 the next morning
+    out_depart = q.time.astimezone(timezone.utc) + timedelta(minutes=6)
+    back_depart = out_depart + MIN_STAY
+    if back_depart > last_depart:
+        return {**NO_TRANSIT, "label": "Demo transit fixture: past the last train back"}
+    minutes = timedelta(minutes=ride)
+    return round_trip_plan(route_id, origin, destination, (out_depart, out_depart + minutes), (back_depart, back_depart + minutes),
+                           (last_depart, last_depart + minutes), True, False, "Demo transit fixture: scheduled round trip")
+
 async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_stops: list[dict[str, Any]]) -> dict[str, Any]:
     if DEMO:
-        return {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None,
-                "label": "Demo transit fixtures; walking estimate used"}
+        return demo_round_trip(q, venue)
     venue_stops = await mbta_nearby_stops(venue["lat"], venue["lng"])
     if not origin_stops or not venue_stops:
-        return {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None,
-                "label": "No nearby MBTA stop pair; walking fallback"}
+        return {**NO_TRANSIT, "label": "No nearby MBTA stop pair; walking fallback"}
     stop_ids = list(dict.fromkeys(s["id"] for s in origin_stops + venue_stops))
     route_results = await asyncio.gather(*(mbta_routes_at(sid) for sid in stop_ids))
     routes_by_stop = dict(zip(stop_ids, route_results))
     depart = q.time.astimezone(timezone.utc)
-    return_after = depart + timedelta(hours=3)
-    return_before = depart + timedelta(hours=8)
+    return_after = depart + MIN_STAY
+    # Never plan a ride home on the next morning's first trains: stop at the end of this service day.
+    service_end = mbta_service_end(q.time).astimezone(timezone.utc)
+    return_before = min(depart + timedelta(hours=8), service_end)
+    last_of_night = return_before >= service_end
+    # One attempt per route, at its closest stop pair, subway lines first.
+    best: dict[str, tuple[tuple[int, float], dict[str, Any], dict[str, Any]]] = {}
     for origin in origin_stops:
         for destination in venue_stops:
-            shared = routes_by_stop.get(origin["id"], set()) & routes_by_stop.get(destination["id"], set())
-            for route_id in shared:
-                alerts_a,alerts_b=await asyncio.gather(mbta_route_alerts(origin["id"],route_id),mbta_route_alerts(destination["id"],route_id))
-                blocked_effects={"NO_SERVICE","SUSPENSION"}
-                if any(a.get("attributes",{}).get("effect") in blocked_effects for a in alerts_a+alerts_b):
-                    continue
-                # A valid leg must be the same trip at both ends, in the correct time order.
-                for direction in (0, 1):
-                    out_a, out_b = await asyncio.gather(
-                        mbta_schedules(origin["id"], route_id, direction, depart, depart + timedelta(minutes=75)),
-                        mbta_schedules(destination["id"], route_id, direction, depart, depart + timedelta(minutes=75)),
-                    )
-                    origin_trips = { _resource_trip_id(x): _event_time(x,"departure") for x in out_a if _resource_trip_id(x) }
-                    destination_trips = { _resource_trip_id(x): _event_time(x,"arrival") for x in out_b if _resource_trip_id(x) }
-                    outbound_ids = {tid for tid, t in origin_trips.items() if t and tid in destination_trips and destination_trips[tid] and t < destination_trips[tid] <= depart+timedelta(minutes=75)}
-                    if not outbound_ids:
-                        continue
-                    return_direction = 1 - direction
-                    ret_a, ret_b = await asyncio.gather(
-                        mbta_schedules(destination["id"], route_id, return_direction, return_after, return_before),
-                        mbta_schedules(origin["id"], route_id, return_direction, return_after, return_before),
-                    )
-                    venue_trips = {_resource_trip_id(x): _event_time(x,"departure") for x in ret_a if _resource_trip_id(x)}
-                    home_trips = {_resource_trip_id(x): _event_time(x,"arrival") for x in ret_b if _resource_trip_id(x)}
-                    return_ids = {tid for tid, t in venue_trips.items() if t and t >= return_after and tid in home_trips and home_trips[tid] and t < home_trips[tid]}
-                    if return_ids:
-                        # Confirm service is currently represented by predictions at either end.
-                        predicted_out, predicted_back = await asyncio.gather(
-                            mbta_predictions(origin["id"], route_id, direction),
-                            mbta_predictions(destination["id"], route_id, return_direction),
-                        )
-                        live_confirmed = bool(predicted_out & outbound_ids)  # the return is 3+ h out, beyond prediction range; it is schedule-confirmed
-                        out_id, ret_id = min(outbound_ids, key=origin_trips.__getitem__), min(return_ids, key=venue_trips.__getitem__)
-                        return {"reachable": True, "reach_value": 1.0 if live_confirmed else 0.5,
-                                "method": "predicted_round_trip" if live_confirmed else "scheduled_round_trip",
-                                "outbound": {"from_stop": origin["name"], "to_stop": destination["name"], "route": route_id,
-                                             "depart_at":origin_trips[out_id].isoformat(),"arrive_at":destination_trips[out_id].isoformat()},
-                                "return": {"from_stop": destination["name"], "to_stop": origin["name"], "route": route_id,
-                                           "depart_at":venue_trips[ret_id].isoformat(),"arrive_at":home_trips[ret_id].isoformat(),
-                                           "before_last_service": True},
-                                "label": "Live departure and scheduled return" if live_confirmed else "Scheduled round trip; prediction unavailable"}
-    return {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None,
-            "label": "No matching scheduled round trip; walking fallback"}
+            for route_id in routes_by_stop.get(origin["id"], set()) & routes_by_stop.get(destination["id"], set()):
+                rank = (MODE_RANK[mbta_line(route_id)["mode"]], origin["distance_m"] + destination["distance_m"])
+                if route_id not in best or rank < best[route_id][0]:
+                    best[route_id] = (rank, origin, destination)
+    options = sorted(best.items(), key=lambda item: item[1][0])[:MBTA_MAX_ROUTE_TRIES]
+    for route_id, (_, origin, destination) in options:
+        alerts_a,alerts_b=await asyncio.gather(mbta_route_alerts(origin["id"],route_id),mbta_route_alerts(destination["id"],route_id))
+        blocked_effects={"NO_SERVICE","SUSPENSION"}
+        if any(a.get("attributes",{}).get("effect") in blocked_effects for a in alerts_a+alerts_b):
+            continue
+        # A valid leg must be the same trip at both ends, in the correct time order.
+        for direction in (0, 1):
+            out_a, out_b = await asyncio.gather(
+                mbta_schedules(origin["id"], route_id, direction, depart, depart + timedelta(minutes=75)),
+                mbta_schedules(destination["id"], route_id, direction, depart, depart + timedelta(minutes=75)),
+            )
+            origin_trips = { _resource_trip_id(x): _event_time(x,"departure") for x in out_a if _resource_trip_id(x) }
+            destination_trips = { _resource_trip_id(x): _event_time(x,"arrival") for x in out_b if _resource_trip_id(x) }
+            outbound_ids = {tid for tid, t in origin_trips.items() if t and tid in destination_trips and destination_trips[tid] and t < destination_trips[tid] <= depart+timedelta(minutes=75)}
+            if not outbound_ids:
+                continue
+            return_direction = 1 - direction
+            if return_after >= return_before:
+                continue
+            ret_a, ret_b = await asyncio.gather(
+                mbta_schedules(destination["id"], route_id, return_direction, return_after, return_before),
+                mbta_schedules(origin["id"], route_id, return_direction, return_after, return_before),
+            )
+            venue_trips = {_resource_trip_id(x): _event_time(x,"departure") for x in ret_a if _resource_trip_id(x)}
+            home_trips = {_resource_trip_id(x): _event_time(x,"arrival") for x in ret_b if _resource_trip_id(x)}
+            return_ids = {tid for tid, t in venue_trips.items() if t and return_after <= t < return_before and tid in home_trips and home_trips[tid] and t < home_trips[tid]}
+            if return_ids:
+                predicted_out = await mbta_predictions(origin["id"], route_id, direction)
+                live_confirmed = bool(predicted_out & outbound_ids)  # the return is beyond prediction range; it is schedule-confirmed
+                out_id = min(outbound_ids, key=origin_trips.__getitem__)
+                ret_id = min(return_ids, key=venue_trips.__getitem__)
+                last_id = max(return_ids, key=venue_trips.__getitem__)
+                return round_trip_plan(route_id, origin["name"], destination["name"],
+                                       (origin_trips[out_id], destination_trips[out_id]), (venue_trips[ret_id], home_trips[ret_id]),
+                                       (venue_trips[last_id], home_trips[last_id]), last_of_night, live_confirmed)
+    return {**NO_TRANSIT, "label": "No matching scheduled round trip; walking fallback"}
 
 def _field_name(fields: list[dict[str, Any]], aliases: tuple[str, ...]) -> str | None:
     names = {str(f.get("id", "")).casefold(): str(f.get("id", "")) for f in fields}
@@ -852,7 +936,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         pre_candidates.append(venue)
     origin_stops=[] if DEMO or not pre_candidates else await mbta_nearby_stops(q.lat,q.lng)
     if DEMO:
-        HEALTH["mbta"].update(status="demo", detail="Demo transit fixtures; reach uses walking fallback")
+        HEALTH["mbta"].update(status="demo", detail="Demo transit fixtures (Red, Green and Orange Line trips)")
         plans={v["id"]: await assess_mbta_round_trip(q,v,origin_stops) for v in pre_candidates}
     else:
         limit=asyncio.Semaphore(5)  # bounds the MBTA burst (each venue can make dozens of calls) so 429s don't trip the breaker
@@ -872,7 +956,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         scored=score_venue(v,median,weather,reach)
         candidates.append({"venue":v,"score":scored,"reachability":reach,
                            "explanation":(f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled." if reach["method"]=="walking_fallback" or v["walk_min"]<=walk
-                                         else f"Open at your requested time and within budget; beyond walking range, so take the MBTA {reach['outbound']['route']} there and back."),
+                                         else f"Open at your requested time and within budget; beyond walking range, so take the T there and back: {transit_summary(reach) or reach['outbound']['route']}."),
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
     candidates=candidates[:8]
