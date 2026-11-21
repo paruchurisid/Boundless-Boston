@@ -94,12 +94,13 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - 🟡 Render auto-deploy: needs Render's GitHub app to have access to the repo.
 - ⬜ Tests cover opening hours, weather, events and the parser only; `main.py` is mostly untested.
 
-### Known issues (Area A)
+### Scoring (Area A)
 
-- **Transit never adds reach.** Venues beyond walking range are removed before the MBTA check runs, so every result says "walk fallback". The reach filter should be "walk **or** MBTA round trip".
-- **Scores top out around 0.4.** Momentum (0.30) is always 0 in live mode, and events (0.10) is 0 until Ticketmaster lands. Spread unused weight over the other components.
-- **"Live round trip" almost never shows.** The return trip is 3+ hours away, beyond MBTA's prediction window.
-- **`weights.yaml` isn't loaded.** The weights are hardcoded in `score_venue`.
+- ✅ Reach is a hard filter: walk **or** MBTA round trip, so transit-only places can rank. The MBTA search considers the 3 nearest stations plus the 2 nearest bus stops.
+- ✅ Components with no data get weight 0 and the rest are rescaled, so missing momentum or events no longer cap scores. Live scores now reach about 0.7–0.9.
+- ✅ "Live round trip" = live-predicted outbound + scheduled return.
+- ✅ Weights and thresholds load from `scoring/weights.yaml`; the quality prior uses the true median.
+- ⬜ Direct routes only (no transfers). The walk to and from stops isn't counted against the walk limit.
 
 ### Up next
 

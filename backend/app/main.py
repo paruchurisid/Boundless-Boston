@@ -7,6 +7,7 @@ import os
 import random
 import re
 import sqlite3
+import statistics
 import time as clock
 import asyncio
 from collections import Counter
@@ -17,11 +18,14 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import httpx
+import yaml
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ROOT = Path(__file__).resolve().parents[2]
+SCORING = yaml.safe_load((ROOT / "scoring" / "weights.yaml").read_text())
+assert abs(sum(SCORING["weights"].values()) - 1.0) < 1e-9, "scoring/weights.yaml weights must sum to 1"
 DEMO = os.getenv("APP_MODE", "demo") == "demo"
 DB_PATH = Path(os.getenv("CACHE_DB", str(ROOT / ".cache" / "public-cache.sqlite3")))
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -295,17 +299,38 @@ def matches_category(venue: dict[str, Any], wanted: str | None) -> bool:
     return wanted in categories
 
 def score_venue(v: dict[str,Any], median: float, weather: dict[str,Any], reach: dict[str, Any]) -> dict[str,Any]:
+    cfg=SCORING
     delta=v.get("momentum_delta"); momentum=min(1,max(0,delta or 0)/10)
     momentum_meta=v.get("momentum_meta") or {"method":"demo_fixture","label":"demo"}
-    reviews=v.get("review_count") or 0; rating=v.get("rating")
-    quality=.5 if rating is None else (((reviews/(reviews+50))*rating+(50/(reviews+50))*median)/5 if reviews+50 else rating/5)
+    reviews=v.get("review_count") or 0; rating=v.get("rating"); m=cfg["quality"]["prior_reviews_m"]
+    quality=.5 if rating is None else ((reviews/(reviews+m))*rating+(m/(reviews+m))*median)/cfg["quality"]["rating_max"]
     reach_value=float(reach.get("reach_value", 0.0))
-    events=0.0
-    adverse=(weather.get("precipitation_chance_pct") or 0)>=50 or (weather.get("temperature_f") is not None and weather["temperature_f"]<40)
-    mood=1.0 if (adverse and v["indoor_outdoor"]=="indoor") else (0.0 if adverse and v["indoor_outdoor"]=="outdoor" else .5)
-    components={"momentum":{"value":momentum,"weight":.3,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},"quality":{"value":quality,"weight":.3,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":50,"prior_rating":median},"sources":["google_places"]},"reach":{"value":reach_value,"weight":.2,"raw":reach,"sources":["mbta"]},"events":{"value":events,"weight":.1,"raw":{"nearby_events":None},"sources":["ticketmaster"],"missing_reason":"Tier 2 not configured"},"weather":{"value":mood,"weight":.1,"raw":weather,"sources":["nws"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_chance_pct") is None else None}}
+    nearby=v.get("nearby_events"); events=0.0 if nearby is None else min(1.0, nearby/cfg["events"]["saturation_count"])
+    w=cfg["weather"]
+    adverse=(weather.get("precipitation_chance_pct") or 0)>=w["precipitation_chance_threshold_pct"] or (weather.get("temperature_f") is not None and weather["temperature_f"]<w["cold_threshold_f"])
+    mood=w["indoor_adverse"] if (adverse and v["indoor_outdoor"]=="indoor") else (w["outdoor_adverse"] if adverse and v["indoor_outdoor"]=="outdoor" else w["neutral_type"])
+    components={"momentum":{"value":momentum,"raw":{"review_delta_30d":delta,**momentum_meta},"sources":["google_places"],"label":momentum_meta.get("label"),"missing_reason":momentum_meta.get("missing_reason")},
+                "quality":{"value":quality,"raw":{"rating":rating,"review_count":reviews,"prior_reviews":m,"prior_rating":median},"sources":["google_places"],"missing_reason":"no rating" if rating is None else None},
+                "reach":{"value":reach_value,"raw":reach,"sources":["mbta"]},
+                "events":{"value":events,"raw":{"nearby_events":nearby},"sources":["ticketmaster"],"missing_reason":"event data unavailable" if nearby is None else None},
+                "weather":{"value":mood,"raw":weather,"sources":["nws"],"missing_reason":"weather unavailable" if weather.get("temperature_f") is None and weather.get("precipitation_chance_pct") is None else None}}
+    # Components without data drop out and the rest are rescaled, so missing sources never cap the score.
+    available=sum(cfg["weights"][k] for k,c in components.items() if not c.get("missing_reason"))
+    for k,c in components.items():
+        c["base_weight"]=cfg["weights"][k]
+        c["weight"]=0.0 if c.get("missing_reason") else c["base_weight"]/available
     total=sum(c["value"]*c["weight"] for c in components.values())
     return {"value":round(total,4),"components":components}
+
+def reach_for(walk_min: int | None, walk_limit: int, plan: dict[str, Any]) -> dict[str, Any] | None:
+    """Eligible if walkable within the limit or a confirmed MBTA round trip exists; the better reach wins."""
+    walkable = walk_min is not None and walk_min <= walk_limit
+    if plan.get("reachable") and (not walkable or plan["reach_value"] >= SCORING["reach"]["walking_fallback"]):
+        return plan
+    if walkable:
+        return {**plan, "reachable": True, "reach_value": SCORING["reach"]["walking_fallback"], "method": "walking_fallback",
+                "label": plan.get("label") or "Within walking range"}
+    return None
 
 def _period_datetime(point: dict[str, Any], zone: ZoneInfo, reference: datetime) -> datetime | None:
     if not point:
@@ -472,8 +497,11 @@ async def mbta_nearby_stops(lat: float, lng: float, radius_m: int = 1200) -> lis
             continue
         distance = haversine(lat, lng, slat, slng)
         if distance <= radius_m:
-            stops.append({"id": stop["id"], "name": attrs.get("name", "MBTA stop"), "lat": slat, "lng": slng, "distance_m": distance})
-    return sorted(stops, key=lambda s: s["distance_m"])[:3]
+            stops.append({"id": stop["id"], "name": attrs.get("name", "MBTA stop"), "lat": slat, "lng": slng, "distance_m": distance,
+                          "station": attrs.get("location_type") == 1})
+    stops.sort(key=lambda s: s["distance_m"])
+    # Nearest stations cover the subway lines (a nearby bus stop or platform would otherwise crowd them out); plus the closest bus stops.
+    return [s for s in stops if s["station"]][:3] + [s for s in stops if not s["station"]][:2]
 
 async def mbta_routes_at(stop_id: str) -> set[str]:
     headers={"x-api-key":os.environ["MBTA_API_KEY"]} if os.getenv("MBTA_API_KEY") else None
@@ -575,7 +603,7 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
                             mbta_predictions(origin["id"], route_id, direction),
                             mbta_predictions(destination["id"], route_id, return_direction),
                         )
-                        live_confirmed = bool(predicted_out & outbound_ids) and bool(predicted_back & return_ids)
+                        live_confirmed = bool(predicted_out & outbound_ids)  # the return is 3+ h out, beyond prediction range; it is schedule-confirmed
                         out_id, ret_id = min(outbound_ids, key=origin_trips.__getitem__), min(return_ids, key=venue_trips.__getitem__)
                         return {"reachable": True, "reach_value": 1.0 if live_confirmed else 0.5,
                                 "method": "predicted_round_trip" if live_confirmed else "scheduled_round_trip",
@@ -584,7 +612,7 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
                                 "return": {"from_stop": destination["name"], "to_stop": origin["name"], "route": route_id,
                                            "depart_at":venue_trips[ret_id].isoformat(),"arrive_at":home_trips[ret_id].isoformat(),
                                            "before_last_service": True},
-                                "label": "Live predictions and scheduled return" if live_confirmed else "Scheduled round trip; prediction unavailable"}
+                                "label": "Live departure and scheduled return" if live_confirmed else "Scheduled round trip; prediction unavailable"}
     return {"reachable": False, "reach_value": 0.5, "method": "walking_fallback", "outbound": None, "return": None,
             "label": "No matching scheduled round trip; walking fallback"}
 
@@ -812,7 +840,6 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         if venue.get("lat") is None or venue.get("lng") is None: continue
         if venue.get("open_hours",{}).get("status_at_requested_time")!="open": continue
         if venue.get("price_level") is None or venue["price_level"]>max_price: continue
-        if venue.get("walk_min") is None or venue["walk_min"]>walk: continue
         if not matches_category(venue,parsed.get("category")): continue
         pre_candidates.append(venue)
     origin_stops=[] if DEMO or not pre_candidates else await mbta_nearby_stops(q.lat,q.lng)
@@ -824,20 +851,17 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         plans={v["id"]:(plan if isinstance(plan,dict) else {"reachable":False,"reach_value":0.0,"method":"unavailable","label":"MBTA plan unavailable"}) for v,plan in zip(pre_candidates,plan_values)}
     eligible=[]
     for v in pre_candidates:
-        reach=plans.get(v["id"],{"reachable":False,"reach_value":0.0,"method":"unavailable"})
-        walking_fallback=v.get("walk_min") is not None and v["walk_min"]<=walk
-        if not reach.get("reachable") and not walking_fallback: continue
-        if not reach.get("reachable"):
-            reach={**reach,"reachable":True,"reach_value":0.5,"method":"walking_fallback"}
-        eligible.append((v,reach))
+        reach=reach_for(v.get("walk_min"),walk,plans.get(v["id"],{"reachable":False,"reach_value":0.0,"method":"unavailable"}))
+        if reach: eligible.append((v,reach))
     ratings=sorted(v["rating"] for v,_ in eligible if v.get("rating") is not None)
-    median=ratings[len(ratings)//2] if ratings else 3.0
+    median=statistics.median(ratings) if ratings else 3.0
     candidates=[]
     for v,reach in eligible:
         v["walk_estimate"]={"minutes":v["walk_min"],"method":v.get("walk_method","fixture_estimate"),"label":"approx." if v.get("walk_method") not in (None,"routed") else None}
         scored=score_venue(v,median,weather,reach)
         candidates.append({"venue":v,"score":scored,"reachability":reach,
-                           "explanation":f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled.",
+                           "explanation":(f"Open at your requested time, within budget, and about {v['walk_min']} minutes on foot; walk time is an estimate where labeled." if reach["method"]=="walking_fallback" or v["walk_min"]<=walk
+                                         else f"Open at your requested time and within budget; beyond walking range, so take the MBTA {reach['outbound']['route']} there and back."),
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:x["score"]["value"],reverse=True)
     candidates=candidates[:8]
