@@ -20,6 +20,7 @@ FastAPI backend                 Render: backend/app/main.py
    ├─ NWS               hourly weather (api.weather.gov)
    ├─ Boston CKAN       311 requests and business licenses (neighborhood panel)
    ├─ Gemini            free text → filters (falls back to rules)
+   ├─ OpenRouteService  street-routed walking minutes
    └─ Ticketmaster      nearby events (branch built, waiting for key approval)
 ```
 
@@ -80,7 +81,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 | Gemini parser | 2 | ✅ Live: free text → filters, with a rule-based fallback |
 | Gemini "why this place" | 2 | ✅ On demand when "Why this?" opens (`POST /api/explain`); numbers are checked against the facts; separate breaker `gemini_explain` |
 | Ticketmaster | 2 | 🟡 Built on `b/ticketmaster`, waiting for API key approval |
-| OpenRouteService (real walk times) | 2 | ⬜ Not started (needs a free key) |
+| OpenRouteService (real walk times) | 2 | ✅ One matrix call per search, before the walk filter; falls back to the straight-line estimate (labeled approx.) |
 | OpenStreetMap Overpass | 2 | ⬜ Not started (no key; needs the dedupe rules in doc 02) |
 | Yelp | 2 | ⬜ Deferred (strict usage terms) |
 | Census ACS | 3 | ⬜ Stretch goal |
@@ -104,5 +105,5 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 
 1. Ticketmaster: test live and open the PR once the key is approved.
 2. Area A: reach filter and weight fixes (above).
-3. OpenRouteService walk times. Consider a per-IP rate limit on `/api/explain` and `/api/query` (Gemini cost).
+3. Consider a per-IP rate limit on `/api/explain` and `/api/query` (Gemini cost).
 4. Before launch: Google billing, consider moving Render to Virginia, and the security and accessibility checks in doc 05.
