@@ -220,7 +220,7 @@ async def parse_query_text(text: str | None) -> dict[str, Any]:
         return {**parse_free_text(text), "parser": "rules"}
     body = {"contents": [{"parts": [{"text": GEMINI_PROMPT + text}]}],
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": GEMINI_SCHEMA, "temperature": 0}}
-    model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    model = os.getenv("GEMINI_MODEL") or "gemini-3.5-flash-lite"  # an empty GEMINI_MODEL= line means default
     data = await request_json("gemini", GEMINI_URL.format(model=model), headers={"x-goog-api-key": key}, method="POST", json_body=body)
     try:
         return {**valid_filters(json.loads(data["candidates"][0]["content"]["parts"][0]["text"])), "parser": "gemini"}
