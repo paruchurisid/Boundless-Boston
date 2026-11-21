@@ -38,15 +38,34 @@ def test_snapshot_candidates_are_nearest_labeled_and_routable(tmp_path, monkeypa
     monkeypatch.setattr(m, "OSM_SNAPSHOT", path)
     q = m.QueryInput.model_construct(time=SAT_7PM, budget="$$", lat=42.355, lng=-71.062, max_walk_min=20)
     venues = m.osm_candidates(q)
-    assert [v["name"] for v in venues] == ["Near Cafe", "Common"]
-    cafe, park = venues
-    assert cafe["open_hours"]["status_at_requested_time"] == "open" and park["open_hours"]["status_at_requested_time"] == "unknown"
-    assert cafe["price_level"] is None and park["indoor_outdoor"] == "outdoor"
+    assert [v["name"] for v in venues] == ["Near Cafe"]  # the park has no hours, so it can't be shown as open
+    cafe = venues[0]
+    assert cafe["open_hours"]["status_at_requested_time"] == "open" and cafe["price_level"] is None
     assert m.routable(cafe)  # OSM venues may use real walking routes
     assert m.HEALTH["overpass"]["status"] == "cached"
 
 
 def test_missing_snapshot_disables_the_backup(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "OSM_SNAPSHOT", tmp_path / "missing.json")
+    q = m.QueryInput.model_construct(time=SAT_7PM, budget="$$", lat=42.355, lng=-71.062, max_walk_min=20)
+    assert m.osm_candidates(q) == [] and m.HEALTH["overpass"]["status"] == "disabled"
+
+
+def test_limit_counts_only_open_matching_venues(tmp_path, monkeypatch):
+    closed = [{"osm": f"node/{i}", "lat": 42.355, "lng": -71.062, "name": f"Closed {i}", "amenity": "cafe", "opening_hours": "Mo-Su 06:00-08:00"} for i in range(30)]
+    pub = {"osm": "node/99", "lat": 42.36, "lng": -71.06, "name": "The Pub", "amenity": "pub", "opening_hours": "Mo-Su 11:00-14:00, 17:00-01:00"}
+    path = tmp_path / "osm.json"
+    path.write_text(json.dumps({"generated_at": "2026-11-21T19:00:00+00:00", "venues": [*closed, pub]}))
+    monkeypatch.setattr(m, "OSM_SNAPSHOT", path)
+    q = m.QueryInput.model_construct(time=SAT_7PM, budget="$$", lat=42.355, lng=-71.062, max_walk_min=20)
+    assert [v["name"] for v in m.osm_candidates(q, "bar")] == ["The Pub"]  # past 30 nearer closed places; pub counts as bar
+    assert m.osm_candidates(q, "pizza") == []
+
+
+def test_bad_times_and_malformed_snapshot(tmp_path, monkeypatch):
+    assert m.osm_open_at("Mo-Su 99:99-12:00", SAT_7PM) == "unknown"
+    path = tmp_path / "osm.json"
+    path.write_text(json.dumps({"venues": []}))  # no generated_at
+    monkeypatch.setattr(m, "OSM_SNAPSHOT", path)
     q = m.QueryInput.model_construct(time=SAT_7PM, budget="$$", lat=42.355, lng=-71.062, max_walk_min=20)
     assert m.osm_candidates(q) == [] and m.HEALTH["overpass"]["status"] == "disabled"

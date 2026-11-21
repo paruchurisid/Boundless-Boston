@@ -522,7 +522,7 @@ def parse_osm_hours(spec: str | None) -> dict[int, list[tuple[int, int]]] | None
     Supports '24/7', 'Mo-Fr 11:00-22:00; Sa,Su 10:00-02:00', 'Su off'. Anything else (PH, months, comments) → None = unknown."""
     if not spec:
         return None
-    spec = spec.strip()
+    spec = re.sub(r"\s*,\s*", ",", spec.strip())  # "11:00-14:00, 17:00-22:00" is common in OSM
     if spec == "24/7":
         return {d: [(0, 1440)] for d in range(7)}
     week: dict[int, list[tuple[int, int]]] = {d: [] for d in range(7)}
@@ -541,6 +541,8 @@ def parse_osm_hours(spec: str | None) -> dict[int, list[tuple[int, int]]] | None
         if m.group(2) not in ("off", "closed"):
             for span in m.group(2).split(","):
                 (h1, m1), (h2, m2) = (map(int, t.split(":")) for t in span.split("-"))
+                if h1 > 24 or h2 > 48 or m1 > 59 or m2 > 59:
+                    return None
                 start, end = h1 * 60 + m1, h2 * 60 + m2
                 spans.append((start, end + 1440 if end <= start else end))  # 18:00-02:00 runs past midnight
         for d in days:
@@ -557,14 +559,30 @@ def osm_open_at(spec: str | None, when: datetime) -> str:
     from_yesterday = any(b > 1440 and minute < b - 1440 for _, b in week[(day - 1) % 7])
     return "open" if today or from_yesterday else "closed"
 
-def osm_candidates(q: QueryInput, limit: int = 20) -> list[dict[str, Any]]:
-    """Backup venues from the bundled OSM snapshot (no key, no live call): the nearest named places within 5 km."""
+_OSM_CACHE: dict[str, Any] = {}
+
+def load_osm_snapshot() -> dict[str, Any] | None:
+    """The parsed snapshot, re-read only when the file changes (it is a few MB; parsing per request would block the loop)."""
     try:
-        snap = json.loads(OSM_SNAPSHOT.read_text())
-    except (OSError, ValueError):
-        HEALTH["overpass"].update(status="disabled", detail="No OSM snapshot; run scripts/refresh_osm_snapshot.py")
+        mtime = OSM_SNAPSHOT.stat().st_mtime
+        if _OSM_CACHE.get("mtime") != mtime:
+            snap = json.loads(OSM_SNAPSHOT.read_text())
+            snap["generated"] = datetime.fromisoformat(snap["generated_at"])
+            if not isinstance(snap["venues"], list):
+                raise ValueError("venues must be a list")
+            _OSM_CACHE.update(mtime=mtime, snap=snap)
+        return _OSM_CACHE["snap"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+def osm_candidates(q: QueryInput, category: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    """Backup venues from the bundled OSM snapshot (no key, no live call): the nearest named places within 5 km
+    that are open at the requested time and match the category; only those count toward the limit."""
+    snap = load_osm_snapshot()
+    if snap is None:
+        HEALTH["overpass"].update(status="disabled", detail="No usable OSM snapshot; run scripts/refresh_osm_snapshot.py")
         return []
-    generated = datetime.fromisoformat(snap["generated_at"])
+    generated = snap["generated"]
     HEALTH["overpass"].update(status="cached", last_success_at=generated.isoformat(), checked_at=now_iso(),
                               cache_age_s=round((datetime.now(timezone.utc) - generated).total_seconds()),
                               detail="Bundled OSM snapshot (backup while Google Places is unavailable)")
@@ -573,12 +591,18 @@ def osm_candidates(q: QueryInput, limit: int = 20) -> list[dict[str, Any]]:
     for distance, v in near:
         if distance > 5000 or len(out) >= limit:
             break
-        kind = {"nightclub": "night_club"}.get(v.get("amenity") or "", v.get("amenity") or v.get("leisure") or "venue")  # match Google type names
+        if osm_open_at(v.get("opening_hours"), q.time) != "open":
+            continue
+        raw = v.get("amenity") or v.get("leisure") or "venue"
+        kind = {"nightclub": "night_club"}.get(raw, raw)  # match Google type names
         cuisine = [c.strip() for c in v.get("cuisine", "").split(";") if c.strip()]
+        categories = [kind, *(["bar"] if kind == "pub" else []), *cuisine]  # a "bar" search should include pubs
+        if not matches_category({"categories": categories}, category):
+            continue
         address = " ".join(x for x in (v.get("addr:housenumber"), v.get("addr:street")) if x) or None
         out.append({"id": f"osm-{v['osm'].replace('/', '-')}", "name": v["name"], "lat": v["lat"], "lng": v["lng"], "address": address,
-                    "categories": [kind, *cuisine], "price_level": None, "rating": None, "review_count": None,
-                    "open_hours": {"status_at_requested_time": osm_open_at(v.get("opening_hours"), q.time), "periods": None,
+                    "categories": categories, "price_level": None, "rating": None, "review_count": None,
+                    "open_hours": {"status_at_requested_time": "open", "periods": None,
                                    "timezone": "America/New_York", "source": "overpass"},
                     "indoor_outdoor": "outdoor" if kind == "park" else "indoor",
                     "walk_min": walk_estimate_minutes(q.lat, q.lng, v["lat"], v["lng"]), "walk_method": "straight_line_estimate",
@@ -1023,7 +1047,8 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
     budget=parsed.get("budget",q.budget); walk=parsed.get("max_walk_min",q.max_walk_min)
     places,_=await live_candidates(q)
     backup=not DEMO and not places  # Google unavailable (no key, quota, outage): fall back to the OSM snapshot, never mixed
-    if backup: places=osm_candidates(q)
+    if backup: places=osm_candidates(q,parsed.get("category"))
+    else: HEALTH["overpass"].update(status="disabled", detail="Standby: used only when Google Places is unavailable")
     # Google Places coordinates must not go to a non-Google routing service (Maps ToS 3.2.3(a),(c)), so only
     # non-Google candidates are routed; Google venues keep the labeled straight-line estimate.
     to_route=[v for v in places if routable(v)]
