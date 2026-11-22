@@ -177,3 +177,13 @@ def test_query_accepts_preference_tags():
     taste = body["recommendations"][0]["score"]["components"]["taste"]
     assert taste["missing_reason"] is None
     assert "tiktok" in [s["source"] for s in body["sources_used"]]
+
+
+def test_cuisine_in_the_name_counts_when_google_only_says_restaurant():
+    assert m.matches_category({"name": "Waku Waku Ramen Chinatown", "categories": ["restaurant"]}, "noodles")
+    assert m.matches_category({"name": "Sugar's Hot Pizza & Subs", "categories": ["restaurant"]}, "pizza")
+    assert m.matches_category({"name": "Avana Sushi 2", "categories": ["restaurant"]}, "sushi")
+    assert not m.matches_category({"name": "Barbara's Kitchen", "categories": ["restaurant"]}, "bar")
+    assert not m.matches_category({"name": "Bistro du Midi", "categories": ["restaurant"]}, "pizza")
+    assert m.matches_category({"name": "Pho Pasteur", "categories": ["restaurant"]}, "noodles")
+    assert not m.matches_category({"name": "Phoenix Landing", "categories": ["bar"]}, "noodles")

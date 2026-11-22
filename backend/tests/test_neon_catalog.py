@@ -62,3 +62,18 @@ def test_unavailable_catalog_uses_existing_sources(monkeypatch):
     monkeypatch.setattr(m, "persist_recommendation_run", AsyncMock(return_value={"status": "disabled"}))
     assert asyncio.run(m.make_query(query()))["recommendations"] == []
     google.assert_awaited_once()
+
+
+def test_a_category_search_asks_google_for_that_category(monkeypatch):
+    monkeypatch.setattr(m, "DEMO", False)
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "test-key")
+    calls = []
+    async def fake_request(source, url, params, **kw):
+        calls.append((url, kw["json_body"]))
+        return {"places": []}
+    monkeypatch.setattr(m, "request_json", fake_request)
+    asyncio.run(m.live_candidates(query(), "noodles"))
+    asyncio.run(m.live_candidates(query(), None))
+    assert calls[0][0].endswith(":searchText") and calls[0][1]["textQuery"] == "ramen noodles"
+    assert calls[0][1]["pageSize"] == 20 and calls[0][1]["locationBias"]["circle"]["radius"] == 5000.0
+    assert calls[1][0].endswith(":searchNearby")  # no category: broad nearby search, as before
