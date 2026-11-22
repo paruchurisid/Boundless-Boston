@@ -1,4 +1,4 @@
-import { lazy, Suspense, StrictMode, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, StrictMode, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, Bookmark, ChevronDown, ChevronRight, CloudRain, Compass, Crosshair, Footprints, Heart, MapPin, Moon, SlidersHorizontal, Sparkles, TrainFront, Utensils, X } from 'lucide-react';
 import type React from 'react';
@@ -119,9 +119,9 @@ const sourceNames:Record<string,string>={google_places:'Google Places',mbta:'MBT
 const futureTime=()=>{const d=new Date(Date.now()+2*60*60*1000);d.setMinutes(0,0,0);const p=(n:number)=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:00`};
 
 function loadSaved():SavedPlace[]{
-  try{const raw=localStorage.getItem(SAVED_KEY);if(!raw)return[];const parsed=JSON.parse(raw);return Array.isArray(parsed)?parsed.filter((x:SavedPlace)=>x&&typeof x.place_id==='string'):[]}catch{return[]}
+  try{const raw=localStorage.getItem(SAVED_KEY);if(!raw)return[];const parsed=JSON.parse(raw);return Array.isArray(parsed)?parsed.filter((x:SavedPlace)=>x&&typeof x.place_id==='string'&&typeof x.name==='string'&&Array.isArray(x.categories)&&x.categories.every((c:unknown)=>typeof c==='string')):[]}catch{return[]}
 }
-function persistSaved(items:SavedPlace[]){localStorage.setItem(SAVED_KEY,JSON.stringify(items))}
+function persistSaved(items:SavedPlace[]){try{localStorage.setItem(SAVED_KEY,JSON.stringify(items))}catch{/* private mode or full storage: keep the in-memory list */}}
 function placeIdFor(v:Venue){return v.source_refs?.find(r=>r.source==='google_places')?.external_id||v.id}
 function tagsFromSaved(items:SavedPlace[]):string[]{
   const counts=new Map<string,number>();
@@ -193,9 +193,10 @@ function App(){
 
  async function disconnectTiktok(){
   await fetch('/api/tiktok/logout',{method:'POST',credentials:'include'}).catch(()=>{});
-  setTiktokTags([]);setTiktokMode('disabled');
+  setTiktokTags([]);setTiktokMode('disabled');setHealth(h=>h.map(x=>x.source==='tiktok'?{...x,status:'disabled'}:x));
  }
 
+ const loadRef=useRef(load);
  async function load(){
   setLoading(true);setError('');
   try{
@@ -216,7 +217,10 @@ function App(){
   else refreshTiktok();
  },[]);
  useEffect(()=>{const refresh=()=>fetch('/api/sources/health').then(r=>r.json()).then(x=>setHealth(x.sources||[])).catch(()=>{});load();refresh();const timer=window.setInterval(refresh,30000);return()=>window.clearInterval(timer)},[]);
- useEffect(()=>{if(data)load()},[preferenceTags.join('|')]);
+ loadRef.current=load;
+ // wait for a pause so several quick hearts send one search, not one each (rate limit)
+ useEffect(()=>{if(!data)return;const t=window.setTimeout(()=>loadRef.current(),800);return()=>window.clearTimeout(t)},[preferenceTags.join('|')]);
+ useEffect(()=>{const onKey=(e:KeyboardEvent)=>{if(e.key==='Escape'){setModal(false);setShowSaved(false)}};window.addEventListener('keydown',onKey);return()=>window.removeEventListener('keydown',onKey)},[]);
 
  async function showDetails(){setModal(true);setNeighborhoodBusy(true);try{const params=new URLSearchParams({lat:String(loc[0]),lng:String(loc[1]),radius_m:'1500'});const response=await fetch(`/api/neighborhood?${params}`);if(!response.ok)throw new Error('Neighborhood data is unavailable');const result:any=await response.json();setNeighborhood(result);setHealth(current=>{const next=[...current];for(const item of result.sources_used||[]){const index=next.findIndex(x=>x.source===item.source);if(index>=0)next[index]={...next[index],status:item.status};else next.push(item)}return next})}catch{setNeighborhood(null)}finally{setNeighborhoodBusy(false)}}
  const whyKey=(r:Rec)=>JSON.stringify(r.explain_facts);
@@ -227,7 +231,7 @@ function App(){
    <a className="brand" href="#"><Dino size={46}/><span>T-Recs</span></a>
    <nav className="stops" aria-label="Sections">{[['#plan','Plan'],['#shortlist','Shortlist'],['#sources','Sources'],['#map','Map']].map(([h,l])=><a key={h} href={h} className={`stop ${l==='Map'?'map-stop':''}`} aria-current={view==='map'&&l==='Map'?'page':undefined}>{l}</a>)}</nav>
    <div className="top-actions">
-    <button className={`icon-button ${showSaved?'is-active':''}`} aria-label="Open saved places" onClick={()=>setShowSaved(true)}><Bookmark size={18} strokeWidth={2.5}/></button>
+    <button className={`icon-button ${showSaved?'is-active':''}`} aria-label="Open saved places" aria-expanded={showSaved} onClick={()=>setShowSaved(true)}><Bookmark size={18} strokeWidth={2.5}/></button>
     <button className="icon-button" aria-label="Open source information" onClick={showDetails}><SlidersHorizontal size={18} strokeWidth={2.5}/></button>
    </div>
   </header>
@@ -270,8 +274,8 @@ function App(){
    <section id="sources" className="sources sketch"><div className="sources-title"><span className="section-kicker">THE SIGNAL CHECK</span><h3>Where this comes from.</h3></div><div className="source-items">{['google_places','mbta','nws','boston_ckan','sports','tiktok',...(health.some(h=>h.source==='overpass'&&h.status!=='disabled')?['overpass']:[])].map(s=>{const item=health.find(h=>h.source===s);return <div className="source-item" key={s}><span className={`source-dot ${item?.status==='live'?'is-live':''}`}/><span>{sourceNames[s]}</span><small>{item?.status||'demo'}</small></div>})}</div><p className="freshness">Source states and timestamps reflect the latest API response. Demo fixtures are labeled; live credentials stay server-side. TikTok is personalization only—not venue discovery.</p><p className="attribution"><a href="https://www.weather.gov/" target="_blank" rel="noreferrer">Weather data by the National Weather Service</a> · <a href="https://www.mbta.com/developers/v3-api" target="_blank" rel="noreferrer">MBTA</a> · <a href="https://data.boston.gov/" target="_blank" rel="noreferrer">City of Boston Open Data</a>{health.some(h=>h.source==='overpass'&&h.status!=='disabled')?<> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">© OpenStreetMap contributors</a></>:null}</p></section>
   </>}
   </main><footer><span>T-RECS © 2026</span><span>MADE FOR THE WAY HOME <ArrowDownRight size={14} strokeWidth={2.5}/></span></footer>
-  {modal&&view!=='atlas'&&<div className="modal-backdrop" onClick={()=>setModal(false)}><section className="modal sketch" onClick={e=>e.stopPropagation()}><button className="modal-close" aria-label="Close" onClick={()=>setModal(false)}><X size={18} strokeWidth={2.5}/></button><span className="section-kicker">SOURCE DETAILS</span><h2>Trust, in the details.</h2><p>Recommendations use transparent fit scores and show whether source data is live, cached, demo, or unavailable.</p>{health.map(h=><div className="health-row" key={h.source}><span className={`source-dot ${h.status==='live'?'is-live':''}`}/><b>{sourceNames[h.source]||h.source}</b><small>{h.status}</small></div>)}<hr/><span className="section-kicker">NEIGHBORHOOD SNAPSHOT</span>{neighborhoodBusy?<p>Loading Boston Open Data…</p>:neighborhood?.["311"]?<><p>311 requests · {neighborhood["311"].period_start} to {neighborhood["311"].period_end}</p>{neighborhood["311"].top_categories.map(item=><div className="health-row" key={item.category}><b>{item.category}</b><small>{item.count}</small></div>)}<p>Recent {neighborhood.business_licenses_source||'business'}</p>{(neighborhood.business_licenses||[]).slice(0,5).map((item,i)=><div className="health-row" key={`${item.name}-${i}`}><b>{item.name||"Business"}</b><small>{item.issued_at}</small></div>)}{(neighborhood.city_contacts||[]).map(c=><p key={c.name}><a href={c.url}>{c.name}</a> · {c.phone}</p>)}</>:<p>Boston Open Data is unavailable right now. No neighborhood figures are being substituted.</p>}</section></div>}
-  {showSaved&&<div className="modal-backdrop" onClick={()=>setShowSaved(false)}><section className="modal sketch saved-modal" onClick={e=>e.stopPropagation()}><button className="modal-close" aria-label="Close saved places" onClick={()=>setShowSaved(false)}><X size={18} strokeWidth={2.5}/></button><span className="section-kicker">SAVED PLACES</span><h2>Your shortlist.</h2><p>Saved on this device only. Categories from these places feed taste scoring with TikTok tags.</p>{saved.length===0?<div className="empty sketch"><Heart size={20} strokeWidth={2.5}/><p>No saved places yet. Tap the heart on a recommendation to keep it here.</p></div>:saved.map(item=><div className="saved-row" key={item.place_id}><div><b>{item.name}</b><small>{(item.categories||[]).slice(0,2).join(' · ')||'place'}{item.address?` · ${item.address}`:''}</small></div><button className="ghost-button" onClick={()=>unsave(item.place_id)}>Remove</button></div>)}</section></div>}
+  {modal&&<div className="modal-backdrop" onClick={()=>setModal(false)}><section className="modal sketch" role="dialog" aria-modal="true" aria-labelledby="details-title" onClick={e=>e.stopPropagation()}><button className="modal-close" aria-label="Close" autoFocus onClick={()=>setModal(false)}><X size={18} strokeWidth={2.5}/></button><span className="section-kicker">SOURCE DETAILS</span><h2 id="details-title">Trust, in the details.</h2><p>Recommendations use transparent fit scores and show whether source data is live, cached, demo, or unavailable.</p>{health.map(h=><div className="health-row" key={h.source}><span className={`source-dot ${h.status==='live'?'is-live':''}`}/><b>{sourceNames[h.source]||h.source}</b><small>{h.status}</small></div>)}<hr/><span className="section-kicker">NEIGHBORHOOD SNAPSHOT</span>{neighborhoodBusy?<p>Loading Boston Open Data…</p>:neighborhood?.["311"]?<><p>311 requests · {neighborhood["311"].period_start} to {neighborhood["311"].period_end}</p>{neighborhood["311"].top_categories.map(item=><div className="health-row" key={item.category}><b>{item.category}</b><small>{item.count}</small></div>)}<p>Recent {neighborhood.business_licenses_source||'business'}</p>{(neighborhood.business_licenses||[]).slice(0,5).map((item,i)=><div className="health-row" key={`${item.name}-${i}`}><b>{item.name||"Business"}</b><small>{item.issued_at}</small></div>)}{(neighborhood.city_contacts||[]).map(c=><p key={c.name}><a href={c.url}>{c.name}</a> · {c.phone}</p>)}</>:<p>Boston Open Data is unavailable right now. No neighborhood figures are being substituted.</p>}</section></div>}
+  {showSaved&&<div className="modal-backdrop" onClick={()=>setShowSaved(false)}><section className="modal sketch saved-modal" role="dialog" aria-modal="true" aria-labelledby="saved-title" onClick={e=>e.stopPropagation()}><button className="modal-close" aria-label="Close saved places" autoFocus onClick={()=>setShowSaved(false)}><X size={18} strokeWidth={2.5}/></button><span className="section-kicker">SAVED PLACES</span><h2 id="saved-title">Your shortlist.</h2><p>Saved on this device only. Categories from these places feed taste scoring with TikTok tags.</p>{saved.length===0?<div className="empty sketch"><Heart size={20} strokeWidth={2.5}/><p>No saved places yet. Tap the heart on a recommendation to keep it here.</p></div>:saved.map(item=><div className="saved-row" key={item.place_id}><div><b>{item.name}</b><small>{(item.categories||[]).slice(0,2).join(' · ')||'place'}{item.address?` · ${item.address}`:''}</small></div><button className="ghost-button" onClick={()=>unsave(item.place_id)}>Remove</button></div>)}</section></div>}
  </div>
 }
 

@@ -101,3 +101,22 @@ test('a nearby game shows on the card and lifts its events score', async ({ page
   await expect(regina.locator('.event-row')).toContainText('Bruins vs Demo Rivals (demo) at TD Garden, 7:00 PM');
   await expect(cards(page).filter({ has: page.getByRole('heading', { name: 'Boston Public Garden' }) }).locator('.event-row')).toHaveCount(0);
 });
+
+test('a saved place survives a reload and the saved list closes with Escape', async ({ page }) => {
+  const name = (await cards(page).first().locator('h3').textContent())!;
+  await page.getByRole('button', { name: `Save ${name}` }).click();
+  await expect(page.getByRole('button', { name: `Remove ${name}` })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await page.getByRole('button', { name: 'Open saved places' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Your shortlist.' });
+  await expect(dialog).toContainText(name);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+});
+
+test('a broken saved list in storage does not break the page', async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem('boundless.savedPlaces.v1', '[{"place_id":"x","name":{},"categories":"bar"},{"place_id":"y","name":"b","categories":[1]}]'));
+  await page.reload();
+  await page.getByRole('button', { name: 'Open saved places' }).click();
+  await expect(page.getByRole('dialog', { name: 'Your shortlist.' })).toContainText('No saved places yet');
+});
