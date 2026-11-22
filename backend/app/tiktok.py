@@ -536,13 +536,16 @@ async def tiktok_preferences(request: Request) -> dict[str, Any]:
     videos = await _fetch_videos(session["access_token"])
     tags = extract_tags_from_videos(videos)
     places = extract_place_mentions_from_videos(videos)
-    if not tags and not places and demo_mode:
-        _touch_health("demo", "Connected session with empty video list; demo tags")
-        return preferences_payload(DEMO_TAGS, "demo", "Connected session with empty video list; demo tags", DEMO_PLACE_MENTIONS)
-    status = "live" if tags or places else "disabled"
-    detail = "" if tags or places else "No mappable tags from videos"
-    _touch_health(status, detail)
-    return preferences_payload(tags, status, detail, places)
+    # Session cookie means Login Kit succeeded — stay connected even if captions
+    # yield no mappable tags (UI should show Disconnect, not flip back to Connect).
+    if not tags and not places:
+        if demo_mode:
+            _touch_health("demo", "Connected session with empty video list; demo tags")
+            return preferences_payload(DEMO_TAGS, "demo", "Connected session with empty video list; demo tags", DEMO_PLACE_MENTIONS)
+        _touch_health("live", "Connected; no mappable tags from videos yet")
+        return preferences_payload([], "live", "Connected; no mappable tags from videos yet", [])
+    _touch_health("live", "")
+    return preferences_payload(tags, "live", "", places)
 
 
 @router.post("/logout")

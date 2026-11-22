@@ -127,6 +127,31 @@ def test_preferences_demo_endpoint():
     assert body["place_mentions"][0]["name"]
 
 
+def test_preferences_live_session_stays_connected_without_tags(monkeypatch, tmp_path):
+    """OAuth session with an empty/unmappable feed must stay live (Disconnect), not disabled."""
+    import app.tiktok as tiktok
+
+    monkeypatch.setenv("APP_MODE", "live")
+    monkeypatch.setenv("TIKTOK_CLIENT_KEY", "test-key")
+    monkeypatch.setenv("TIKTOK_CLIENT_SECRET", "test-secret")
+    monkeypatch.setattr(tiktok, "SESSION_DB", tmp_path / "tiktok-sessions.sqlite3")
+    tiktok.init_session_db()
+    tiktok._set_session("sess-1", "access-token", None, "open-1", 3600)
+
+    async def _no_videos(_token: str):
+        return []
+
+    monkeypatch.setattr(tiktok, "_fetch_videos", _no_videos)
+    client = TestClient(m.app)
+    res = client.get("/api/tiktok/preferences", cookies={tiktok.SESSION_COOKIE: "sess-1"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["connected"] is True
+    assert body["mode"] == "live"
+    assert body["preference_tags"] == []
+    assert m.HEALTH["tiktok"]["status"] == "live"
+
+
 def test_query_accepts_preference_tags():
     m._HITS.clear()  # earlier rate-limit tests can leave the sliding window full
     client = TestClient(m.app)
