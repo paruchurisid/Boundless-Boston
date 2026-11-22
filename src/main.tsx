@@ -133,6 +133,16 @@ function tagsFromSaved(items:SavedPlace[]):string[]{
   for(const item of items)for(const c of item.categories||[])counts.set(c,(counts.get(c)||0)+1);
   return [...counts.entries()].sort((a,b)=>b[1]-a[1]).map(([tag])=>tag).slice(0,12);
 }
+function VenueCard({r,i,expanded,onToggleWhy,whyText,aiSummary,saved,onToggleSave,showTiktokBadge=false,idPrefix=''}:{r:Rec;i:number;expanded:boolean;onToggleWhy:()=>void;whyText:string;aiSummary:boolean;saved:boolean;onToggleSave:()=>void;showTiktokBadge?:boolean;idPrefix?:string}){
+  const line=r.reachability.outbound?.line;const band=line?line.color:'#24704a';const dark=line?.mode==='bus';
+  return <article id={`${idPrefix}venue-${r.venue.id}`} className={`venue-card sketch ${expanded?'expanded':''}`}>
+    <div className="sign-band venue-band" style={{background:band,color:dark?'#141414':'#fff'}}><div><div className="tags"><span>{String(i+1).padStart(2,'0')}</span><span>{r.venue.categories[0]?.replaceAll('_',' ')||'local favorite'}</span><span>{'$'.repeat(r.venue.price_level||1)}</span>{showTiktokBadge?<span className="tiktok-badge">From your TikTok</span>:null}</div><h3>{r.venue.name}</h3></div>{line?<Trolley color={line.color} size={52}/>:<Steps/>}</div>
+    <div className="sign-body"><div className="venue-top"><p className="venue-address">{r.venue.address}</p><button className={`heart ${saved?'is-saved':''}`} aria-pressed={saved} aria-label={`${saved?'Remove':'Save'} ${r.venue.name}`} onClick={onToggleSave}><Heart size={18} strokeWidth={2.5}/></button></div>
+    <div className="venue-stats"><span><span className="star">★</span> {r.venue.rating?.toFixed(1)||'—'} <small>({r.venue.review_count?.toLocaleString()||'—'})</small></span><span><MapPin size={13} strokeWidth={2.5}/> {line&&r.reachability.total_min!=null?`${r.reachability.total_min} min by T`:`${r.venue.walk_min} min walk${r.venue.walk_estimate?.label==='approx.'?' (approx.)':''}`}</span><span><TrainFront size={14} strokeWidth={2.5}/> {r.reachability.method==='predicted_round_trip'?'Live round trip':r.reachability.method==='scheduled_round_trip'?'Scheduled round trip':r.reachability.method==='walking_fallback'?'On foot':'Transit check'}</span><span className="open-status">OPEN</span></div>
+    <TransitRow r={r}/><GameRow r={r}/>
+    <div className="score-row"><div className="score"><strong>{Math.round(r.score.value*100)}</strong><small>FIT</small></div><div className="score-track"><div style={{width:`${Math.round(r.score.value*100)}%`}}/></div><button className="why-button" onClick={onToggleWhy}>Why this? <ChevronDown size={14} strokeWidth={2.5}/></button></div>{expanded&&<div className="breakdown"><p>{whyText}{aiSummary?<small> · AI summary from the facts below</small>:null}</p><p>{r.reach_explanation}</p>{Object.entries(r.score.components).map(([name,c])=><div className="component" key={name}><span>{name}<small>{c.missing_reason?` · not used (${c.missing_reason})`:c.label==='approx.'?' · approx.':c.label==='demo'?' · demo':''}</small></span><div><i style={{width:`${Math.round(c.value*100)}%`}}/></div><b>{Math.round(c.value*100)}<small> × {c.weight.toFixed(2)}</small></b></div>)}</div>}
+    <div className="attribution" translate="no">{(r.venue.attributions||[]).map((a,j)=><span key={`${a.source}-${j}`}>{a.url?<a href={a.url} target="_blank" rel="noreferrer">{a.text}</a>:a.text}{j<(r.venue.attributions.length-1)?' · ':''}</span>)}</div></div></article>;
+}
 
 function App(){
  const [view,setView]=useState(location.hash==='#map'||location.hash==='#atlas'?'map':'planner');
@@ -156,10 +166,10 @@ function App(){
  const tiktokMatched=useMemo(()=>{
    return placeMentions.map(m=>{
      const hit=recsForMatch.find(r=>namesOverlap(m.name,r.venue.name));
-     return {mention:m,venue:hit?.venue||null};
+     return {mention:m,rec:hit||null};
    });
  },[placeMentions,recsForMatch]);
- const tiktokMatchedIds=useMemo(()=>new Set(tiktokMatched.filter(x=>x.venue).map(x=>x.venue!.id)),[tiktokMatched]);
+ const tiktokMatchedIds=useMemo(()=>new Set(tiktokMatched.filter(x=>x.rec).map(x=>x.rec!.venue.id)),[tiktokMatched]);
 
  function updateSaved(next:SavedPlace[]){setSaved(next);persistSaved(next)}
  function toggleSave(v:Venue){
@@ -287,21 +297,15 @@ function App(){
    {error&&<div className="notice error sketch">{error}</div>}
    {data?.empty_message&&<div className="empty sketch"><Dino size={64}/><p>{data.empty_message}</p></div>}
    <div className="content-grid"><section className="results-list">
-    {recs.map((r,i)=>{const line=r.reachability.outbound?.line;const band=line?line.color:'#24704a';const dark=line?.mode==='bus';return <article id={`venue-${r.venue.id}`} className={`venue-card sketch ${expanded===r.venue.id?'expanded':''}`} key={r.venue.id}>
-    <div className="sign-band venue-band" style={{background:band,color:dark?'#141414':'#fff'}}><div><div className="tags"><span>{String(i+1).padStart(2,'0')}</span><span>{r.venue.categories[0]?.replaceAll('_',' ')||'local favorite'}</span><span>{'$'.repeat(r.venue.price_level||1)}</span>{tiktokMatchedIds.has(r.venue.id)?<span className="tiktok-badge">From your TikTok</span>:null}</div><h3>{r.venue.name}</h3></div>{line?<Trolley color={line.color} size={52}/>:<Steps/>}</div>
-    <div className="sign-body"><div className="venue-top"><p className="venue-address">{r.venue.address}</p><button className={`heart ${savedIds.has(placeIdFor(r.venue))?'is-saved':''}`} aria-pressed={savedIds.has(placeIdFor(r.venue))} aria-label={`${savedIds.has(placeIdFor(r.venue))?'Remove':'Save'} ${r.venue.name}`} onClick={()=>toggleSave(r.venue)}><Heart size={18} strokeWidth={2.5}/></button></div>
-    <div className="venue-stats"><span><span className="star">★</span> {r.venue.rating?.toFixed(1)||'—'} <small>({r.venue.review_count?.toLocaleString()||'—'})</small></span><span><MapPin size={13} strokeWidth={2.5}/> {line&&r.reachability.total_min!=null?`${r.reachability.total_min} min by T`:`${r.venue.walk_min} min walk${r.venue.walk_estimate?.label==='approx.'?' (approx.)':''}`}</span><span><TrainFront size={14} strokeWidth={2.5}/> {r.reachability.method==='predicted_round_trip'?'Live round trip':r.reachability.method==='scheduled_round_trip'?'Scheduled round trip':r.reachability.method==='walking_fallback'?'On foot':'Transit check'}</span><span className="open-status">OPEN</span></div>
-    <TransitRow r={r}/><GameRow r={r}/>
-    <div className="score-row"><div className="score"><strong>{Math.round(r.score.value*100)}</strong><small>FIT</small></div><div className="score-track"><div style={{width:`${Math.round(r.score.value*100)}%`}}/></div><button className="why-button" onClick={()=>toggleWhy(r)}>Why this? <ChevronDown size={14} strokeWidth={2.5}/></button></div>{expanded===r.venue.id&&<div className="breakdown"><p>{whys[whyKey(r)]||r.explanation}{whys[whyKey(r)]&&<small> · AI summary from the facts below</small>}</p><p>{r.reach_explanation}</p>{Object.entries(r.score.components).map(([name,c])=><div className="component" key={name}><span>{name}<small>{c.missing_reason?` · not used (${c.missing_reason})`:c.label==='approx.'?' · approx.':c.label==='demo'?' · demo':''}</small></span><div><i style={{width:`${Math.round(c.value*100)}%`}}/></div><b>{Math.round(c.value*100)}<small> × {c.weight.toFixed(2)}</small></b></div>)}</div>}
-    <div className="attribution" translate="no">{(r.venue.attributions||[]).map((a,i)=><span key={`${a.source}-${i}`}>{a.url?<a href={a.url} target="_blank" rel="noreferrer">{a.text}</a>:a.text}{i<(r.venue.attributions.length-1)?' · ':''}</span>)}</div></div></article>})}
+    {recs.map((r,i)=>{const key=whyKey(r);return <VenueCard key={r.venue.id} r={r} i={i} expanded={expanded===r.venue.id} onToggleWhy={()=>toggleWhy(r)} whyText={whys[key]||r.explanation} aiSummary={key in whys&&!!whys[key]} saved={savedIds.has(placeIdFor(r.venue))} onToggleSave={()=>toggleSave(r.venue)} showTiktokBadge={tiktokMatchedIds.has(r.venue.id)}/>})}
     {placeMentions.length>0&&<div className="tiktok-places sketch" aria-label="From your TikTok">
       <span className="section-kicker">FROM YOUR TIKTOK</span>
       <div className="tiktok-place-list">
-       {tiktokMatched.map(({mention,venue})=>venue
-         ? <button key={`m-${mention.name}`} className="tiktok-place matched" type="button" onClick={()=>document.getElementById(`venue-${venue.id}`)?.scrollIntoView({behavior:'smooth',block:'center'})}>
-            <b>{venue.name}</b>
-           </button>
-         : <div key={`u-${mention.name}`} className="tiktok-place"><b>{mention.name}</b></div>)}
+       {tiktokMatched.map(({mention,rec},i)=>{
+         if(!rec) return <div key={`u-${mention.name}`} className="tiktok-place"><b>{mention.name}</b></div>;
+         const key=whyKey(rec);
+         return <VenueCard key={`tt-${mention.name}`} r={rec} i={i} idPrefix="tt-" expanded={expanded===rec.venue.id} onToggleWhy={()=>toggleWhy(rec)} whyText={whys[key]||rec.explanation} aiSummary={!!whys[key]} saved={savedIds.has(placeIdFor(rec.venue))} onToggleSave={()=>toggleSave(rec.venue)} showTiktokBadge/>;
+       })}
       </div>
      </div>}
     </section>

@@ -210,11 +210,10 @@ footer span:last-child{display:flex;gap:6px;align-items:center}
 .tiktok-connect:disabled{opacity:.7}
 .tiktok-connect-shine{position:absolute;inset:0 auto 0 -40%;width:40%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent);transform:skewX(-18deg);animation:taste-shine 2.4s ease-in-out infinite}
 .tiktok-disconnect{position:relative;z-index:1}
-.tiktok-places{padding:16px 18px;display:flex;flex-direction:column;gap:8px;margin-top:8px}
-.tiktok-place-list{display:flex;flex-direction:column;gap:8px}
+.tiktok-places{padding:16px 18px;display:flex;flex-direction:column;gap:12px;margin-top:8px}
+.tiktok-place-list{display:flex;flex-direction:column;gap:14px}
+.tiktok-place-list .venue-card{margin:0}
 .tiktok-place{text-align:left;background:var(--navy2);color:var(--cream);border:var(--line);border-radius:14px;padding:10px 12px}
-.tiktok-place.matched{cursor:pointer}
-.tiktok-place.matched:hover{background:var(--gold);color:var(--night)}
 .tiktok-place b{display:block;font:700 15px var(--head)}
 .tags .tiktok-badge{background:var(--gold);color:var(--night);border-radius:999px;padding:2px 8px;font:700 11px var(--head);text-transform:none;letter-spacing:0}
 .taste-empty{margin:0;font-size:14px;color:var(--muted)}
