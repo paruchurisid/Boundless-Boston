@@ -4,6 +4,8 @@ A Boston night planner for students: places that are **open at your time, in bud
 
 **Live:** https://boundless-boston-web-5ze8.onrender.com · **API:** https://boundless-boston-api-5ze8.onrender.com
 
+**Slides:** [T-Recs pitch deck](https://docs.google.com/presentation/d/1BxCNiX-C_nN_xFMHs8_rWdXGC1hmFUtt/edit?usp=sharing)
+
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to ship a change, and current progress.
 - [docs/DESIGN.md](docs/DESIGN.md): design choices and exactly how places are ranked.
 - [docs/SOURCES.md](docs/SOURCES.md) and [docs/architecture/](docs/architecture/): data sources and architecture.
