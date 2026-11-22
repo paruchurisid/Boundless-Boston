@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -109,11 +109,23 @@ async def record_once(client: httpx.AsyncClient) -> int:
     return len(rows)
 
 
+def recorder_until() -> datetime | None:
+    """RECORDER_UNTIL (ISO time with offset) ends the run; unset means record until stopped."""
+    raw = os.getenv("RECORDER_UNTIL")
+    if not raw:
+        return None
+    until = datetime.fromisoformat(raw)
+    if until.tzinfo is None:
+        raise ValueError("RECORDER_UNTIL needs a UTC offset, e.g. 2026-11-24T00:00:00-05:00")
+    return until
+
+
 async def run_recorder(interval_s: int = 60) -> None:
     if not configured():
         raise SystemExit("Set TIGER_DATABASE_URL (and pip install asyncpg) to record train reliability.")
+    until = recorder_until()
     async with httpx.AsyncClient(timeout=20) as client:
-        while True:
+        while until is None or datetime.now(timezone.utc) < until:
             try:
                 print(f"{datetime.now().isoformat(timespec='seconds')} recorded {await record_once(client)} departures", flush=True)
             except Exception as e:  # one bad minute (MBTA hiccup, DB blip) must not stop the overnight run

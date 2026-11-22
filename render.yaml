@@ -16,6 +16,11 @@ services:
         sync: false
       - key: TIGER_DATABASE_URL
         sync: false
+      # Record train reliability inside the API until the end of Nov 23 Boston time (kept awake by keep-awake.yml).
+      - key: RUN_RECORDER
+        value: "1"
+      - key: RECORDER_UNTIL
+        value: "2026-11-24T00:00:00-05:00"
       # shortcut: free-plan disk is wiped on each deploy/restart, so the cache starts cold; add a Render disk if warm cache matters.
       - key: CACHE_DB
         value: /tmp/public-cache.sqlite3

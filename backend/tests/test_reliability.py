@@ -84,3 +84,13 @@ def test_a_failure_skips_tiger_for_a_minute(monkeypatch):
     assert asyncio.run(rel.recent([("Red", "place-harsq", 1)])) == {}
     assert asyncio.run(rel.recent([("Red", "place-harsq", 1)])) == {}  # skipped, no second connection attempt
     assert calls == [1] and rel.status() == {"status": "unavailable"}
+
+
+def test_recorder_stops_at_its_end_time(monkeypatch):
+    monkeypatch.setenv("TIGER_DATABASE_URL", "postgres://unused")
+    monkeypatch.setattr(rel, "asyncpg", object())
+    monkeypatch.setenv("RECORDER_UNTIL", "2000-01-01T00:00:00-05:00")
+    async def never(_client):
+        raise AssertionError("recorded after the end time")
+    monkeypatch.setattr(rel, "record_once", never)
+    asyncio.run(rel.run_recorder(interval_s=0))  # returns at once instead of looping

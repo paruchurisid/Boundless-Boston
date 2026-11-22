@@ -1329,6 +1329,19 @@ async def discover_boston_resources() -> None:
     # Resolve CKAN resource IDs from package metadata; never pin deployment-specific IDs.
     if not DEMO:
         await resolve_ckan_resources(force=True)
+    # RUN_RECORDER=1 records train reliability inside the API (Render), so no always-on laptop is needed.
+    if os.getenv("RUN_RECORDER") == "1" and reliability.configured():
+        until = reliability.recorder_until()
+        if until is None or datetime.now(timezone.utc) < until:
+            task = asyncio.create_task(reliability.run_recorder())
+            _BACKGROUND.add(task)
+            task.add_done_callback(_recorder_done)
+
+def _recorder_done(task: asyncio.Task) -> None:
+    _BACKGROUND.discard(task)
+    if not task.cancelled() and task.exception():
+        print(f"train recorder stopped: {type(task.exception()).__name__}", flush=True)
+_BACKGROUND: set[asyncio.Task] = set()  # keeps the recorder task referenced so it is not garbage-collected
 
 @app.get("/api/health")
 def health() -> dict[str,Any]: return {"status":"ok", "neon": neon_status(), "tiger": reliability.status()}

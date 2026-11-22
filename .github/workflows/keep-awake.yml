@@ -1,0 +1,21 @@
+name: Keep API awake
+
+# Render's free plan sleeps after 15 idle minutes, which would also pause the train reliability recorder
+# running inside the API (RUN_RECORDER=1). Pinging every 5 minutes keeps it up; GitHub may run late.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the API until recording ends
+        run: |
+          # Matches RECORDER_UNTIL on Render; after it the API is allowed to sleep again.
+          if [ "$(date -u +%s)" -ge "$(date -u -d '2026-11-24T05:00:00Z' +%s)" ]; then echo "Recording window over"; exit 0; fi
+          curl -fsS --retry 2 --max-time 60 https://boundless-boston-api-5ze8.onrender.com/api/health
