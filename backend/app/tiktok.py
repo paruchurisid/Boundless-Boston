@@ -140,6 +140,14 @@ DEMO_TAGS = [
     {"tag": "bar", "count": 2},
 ]
 
+# When Login Kit connects but the Display API feed is empty or unmappable, still
+# show taste chips so the planner UI isn't blank (matches the sandbox account vibe).
+LIVE_FALLBACK_TAGS = [
+    {"tag": "night_club", "count": 3},
+    {"tag": "mexican", "count": 3},
+    {"tag": "seafood", "count": 3},
+]
+
 # Best-effort place guesses for demo connect (not official TikTok POIs).
 DEMO_PLACE_MENTIONS = [
     {"name": "Democracy Brewing", "snippet": "Dinner at Democracy Brewing #boston", "source": "demo"},
@@ -537,13 +545,18 @@ async def tiktok_preferences(request: Request) -> dict[str, Any]:
     tags = extract_tags_from_videos(videos)
     places = extract_place_mentions_from_videos(videos)
     # Session cookie means Login Kit succeeded — stay connected even if captions
-    # yield no mappable tags (UI should show Disconnect, not flip back to Connect).
+    # yield no mappable tags (UI should show Disconnect + fallback chips, not a blank card).
     if not tags and not places:
         if demo_mode:
             _touch_health("demo", "Connected session with empty video list; demo tags")
             return preferences_payload(DEMO_TAGS, "demo", "Connected session with empty video list; demo tags", DEMO_PLACE_MENTIONS)
-        _touch_health("live", "Connected; no mappable tags from videos yet")
-        return preferences_payload([], "live", "Connected; no mappable tags from videos yet", [])
+        _touch_health("live", "Connected; feed had no mappable tags — using fallback taste chips")
+        return preferences_payload(
+            LIVE_FALLBACK_TAGS,
+            "live",
+            "Connected; feed had no mappable tags — using fallback taste chips",
+            DEMO_PLACE_MENTIONS,
+        )
     _touch_health("live", "")
     return preferences_payload(tags, "live", "", places)
 

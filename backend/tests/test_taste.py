@@ -128,7 +128,7 @@ def test_preferences_demo_endpoint():
 
 
 def test_preferences_live_session_stays_connected_without_tags(monkeypatch, tmp_path):
-    """OAuth session with an empty/unmappable feed must stay live (Disconnect), not disabled."""
+    """OAuth session with an empty/unmappable feed stays live and still shows taste chips."""
     import app.tiktok as tiktok
 
     monkeypatch.setenv("APP_MODE", "live")
@@ -148,7 +148,8 @@ def test_preferences_live_session_stays_connected_without_tags(monkeypatch, tmp_
     body = res.json()
     assert body["connected"] is True
     assert body["mode"] == "live"
-    assert body["preference_tags"] == []
+    assert body["preference_tags"] == ["night_club", "mexican", "seafood"]
+    assert body["place_mentions"]
     assert m.HEALTH["tiktok"]["status"] == "live"
 
 
