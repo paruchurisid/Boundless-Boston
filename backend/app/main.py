@@ -469,10 +469,14 @@ def matches_category(venue: dict[str, Any], wanted: str | None) -> bool:
     if not wanted:
         return True
     categories=[str(c).casefold() for c in venue.get("categories", [])]
+    # Google often tags a ramen or pizza shop only as "restaurant", so a cuisine word in the name counts too (whole words).
+    name=str(venue.get("name","")).casefold()
+    def named(*words: str) -> bool:
+        return any(re.search(rf"\b{re.escape(w)}", name) for w in words)
     if wanted == "noodles":
-        return any("ramen" in c or "noodle" in c or c in ("japanese", "vietnamese") for c in categories)
+        return any("ramen" in c or "noodle" in c or c in ("japanese", "vietnamese") for c in categories) or named("ramen", "noodle") or bool(re.search(r"\b(pho|udon)\b", name))
     if wanted == "pizza":
-        return any("pizza" in c for c in categories)
+        return any("pizza" in c for c in categories) or named("pizz")
     if wanted == "cafe":
         return any("cafe" in c or "coffee" in c or "bakery" in c for c in categories)
     if wanted == "park":
@@ -483,7 +487,7 @@ def matches_category(venue: dict[str, Any], wanted: str | None) -> bool:
             for c in categories
         )
     if wanted in RESTAURANT_CUISINES:
-        return any(wanted in c or c == wanted for c in categories)
+        return any(wanted in c or c == wanted for c in categories) or named(wanted)
     return wanted in categories
 
 def taste_score(categories: list[str] | None, preference_tags: list[str] | None) -> dict[str, Any]:
@@ -746,15 +750,25 @@ def normalize_osm_candidates(q: QueryInput, venues: list[dict[str, Any]], catego
                     "momentum_delta": None, "momentum_meta": {"method": "unavailable", "label": None, "missing_reason": "no_velocity_data"}})
     return out
 
-async def live_candidates(q: QueryInput) -> tuple[list[dict[str,Any]],bool]:
+# Words Google Text Search understands better than our category ids.
+PLACES_TEXT_QUERY = {"noodles": "ramen noodles", "bbq": "barbecue", "hamburger": "burgers", "steak": "steakhouse", "night_club": "night club"}
+
+async def live_candidates(q: QueryInput, category: str | None = None) -> tuple[list[dict[str,Any]],bool]:
     key=os.getenv("GOOGLE_MAPS_API_KEY")
     if DEMO: return [dict(v) for v in FIXTURES], False
     if not key:
         HEALTH["google_places"].update(status="disabled", detail="GOOGLE_MAPS_API_KEY is not configured")
         return [], False
-    body={"locationRestriction":{"circle":{"center":{"latitude":q.lat,"longitude":q.lng},"radius":5000}},"maxResultCount":20,"includedTypes":["restaurant","cafe","bar","night_club","park"]}
+    # A specific category asks Google for it directly; a nearby search returns only the 20 most prominent places of any
+    # kind, which rarely include e.g. a pizza place, so filtering those afterwards found nothing.
+    if category and category != "restaurant":
+        url="https://places.googleapis.com/v1/places:searchText"
+        body={"textQuery":PLACES_TEXT_QUERY.get(category,category),"locationBias":{"circle":{"center":{"latitude":q.lat,"longitude":q.lng},"radius":5000.0}},"pageSize":20}
+    else:
+        url="https://places.googleapis.com/v1/places:searchNearby"
+        body={"locationRestriction":{"circle":{"center":{"latitude":q.lat,"longitude":q.lng},"radius":5000}},"maxResultCount":20,"includedTypes":["restaurant","cafe","bar","night_club","park"]}
     try:
-        data=await request_json("google_places","https://places.googleapis.com/v1/places:searchNearby",{},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"places.id,places.displayName,places.location,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.currentOpeningHours,places.regularOpeningHours,places.primaryType,places.types,places.googleMapsUri,places.timeZone,places.attributions"},method="POST",json_body=body)
+        data=await request_json("google_places",url,{},headers={"X-Goog-Api-Key":key,"X-Goog-FieldMask":"places.id,places.displayName,places.location,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.currentOpeningHours,places.regularOpeningHours,places.primaryType,places.types,places.googleMapsUri,places.timeZone,places.attributions"},method="POST",json_body=body)
         if data is None:
             return [], False
         result=[]
@@ -762,6 +776,7 @@ async def live_candidates(q: QueryInput) -> tuple[list[dict[str,Any]],bool]:
             loc=p.get("location",{}); pl=p.get("priceLevel"); price={"PRICE_LEVEL_FREE":1,"PRICE_LEVEL_INEXPENSIVE":1,"PRICE_LEVEL_MODERATE":2,"PRICE_LEVEL_EXPENSIVE":3,"PRICE_LEVEL_VERY_EXPENSIVE":3}.get(pl)
             latitude, longitude=loc.get("latitude"),loc.get("longitude")
             if latitude is None or longitude is None: continue
+            if haversine(q.lat,q.lng,latitude,longitude)>5000: continue  # text search only biases toward the area
             hours=p.get("currentOpeningHours") or p.get("regularOpeningHours")
             tz=p.get("timeZone",{}).get("id") if isinstance(p.get("timeZone"),dict) else None
             types=p.get("types",[])
@@ -1341,7 +1356,7 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
         HEALTH["overpass"].update(status="cached", checked_at=now_iso(), last_success_at=now_iso(),
                                   detail="OpenStreetMap places from Neon catalog; hours checked for requested time")
     else:
-        places,_=await live_candidates(q)
+        places,_=await live_candidates(q,parsed.get("category"))
         backup=not DEMO and not places
         if backup: places=osm_candidates(q,parsed.get("category"))
         else: HEALTH["overpass"].update(status="disabled", detail="Standby: no catalog candidates; using Google Places or demo")
