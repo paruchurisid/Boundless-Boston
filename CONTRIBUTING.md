@@ -147,7 +147,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 4. **Review**: get approval before merging. We squash-merge.
 5. **Deploy**:
    - Both the frontend and the API are in `render.yaml` (one Render Blueprint).
-   - **Render auto-deploy is currently not firing**, so trigger a deploy from the Render dashboard (or through the Render MCP) after merging.
+   - Render has no GitHub access, so CI deploys instead: after every check passes on `main`, the `deploy` job in `.github/workflows/ci.yml` calls the Render deploy hooks (repo secrets `RENDER_DEPLOY_HOOK_WEB` and `RENDER_DEPLOY_HOOK_API`). Until those secrets are set, it skips, and you deploy from the Render dashboard.
    - Check `https://boundless-boston-api-5ze8.onrender.com/api/sources/health`.
 
 **Secrets:** keys live only in `.env` (git-ignored) and on Render's Environment page. Never put them in the frontend, a commit or chat.
@@ -177,7 +177,7 @@ Demo mode needs no keys. Live mode uses whichever keys are set, and any source w
 - CI on PRs: pytest, typecheck, build, and a Playwright demo walkthrough (`e2e/demo.spec.ts`, demo fixtures, no keys).
 - Backend on Render, free plan, Oregon. It sleeps when idle, so the first request can take about a minute.
 - Frontend on a Render static site (`boundless-boston-web-5ze8`), with `/api/*` rewritten to the API (POST bodies and query strings pass through). It replaces Vercel.
-- Partly done: Render auto-deploy: needs Render's GitHub app to have access to the repo.
+- Partly done: deploys from CI through Render deploy hooks; needs the two `RENDER_DEPLOY_HOOK_*` repo secrets set by the repo owner.
 - Tests: 57 backend tests (hours, weather, events, parser, scoring, transit, OSM backup, rate limits) + 9 Playwright demo steps. Large parts of `main.py` (live adapters) are still only tested by hand.
 
 ### Google Maps terms
