@@ -9,7 +9,9 @@ BOSTON = ZoneInfo("America/New_York")
 
 def query(hour: int, minute: int = 0, limit: int = 30, **extra) -> m.QueryInput:
     when = datetime(2026, 11, 21, hour, minute, tzinfo=BOSTON)
-    return m.QueryInput(time=when, budget="$$", lat=42.355, lng=-71.062, max_walk_min=limit, **extra)
+    # Validate with a time that passes the next-24h check, then swap in the fixed date so tests run on any day
+    q = m.QueryInput(time=datetime.now(BOSTON) + timedelta(hours=1), budget="$$", lat=42.355, lng=-71.062, max_walk_min=limit, **extra)
+    return q.model_copy(update={"time": when})
 
 
 def test_boston_line_names_and_colors():

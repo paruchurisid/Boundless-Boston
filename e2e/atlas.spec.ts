@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('atlas remains searchable without WebGL and restores the planner', async ({ page }) => {
   await page.goto('/#atlas');
-  await expect(page.getByRole('heading', { name: 'College Atlas', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Boston, mapped.', exact: true })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'Interactive map unavailable' })).toBeVisible();
   await expect(page.locator('#campus option')).toHaveCount(20);
   await page.getByLabel('Search campuses').fill('boston');
@@ -17,7 +17,7 @@ test('atlas remains searchable without WebGL and restores the planner', async ({
   await page.getByRole('link', { name: 'Plan', exact: true }).click();
   await expect(page.getByRole('button', { name: /Find my night/ })).toBeVisible();
   await expect(page.locator('#campus')).toHaveCount(0);
-  await page.getByRole('link', { name: 'College Atlas' }).click();
+  await page.getByRole('link', { name: 'Map', exact: true }).click();
   await expect(page.locator('#campus option')).toHaveCount(20);
 });
 
