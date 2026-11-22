@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.tiktok import init_session_db, router as tiktok_router
 from app.neon import catalog_places, persist_recommendation_run, status as neon_status
+from app import reliability
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / ".env")
@@ -801,7 +802,7 @@ async def mbta_route_alerts(stop_id: str, route_id: str, at: datetime) -> list[d
 
 def round_trip_plan(route_id: str, origin: str, destination: str, out: tuple[datetime, datetime], back: tuple[datetime, datetime],
                     last: tuple[datetime, datetime], last_of_night: bool, live: bool, start: datetime, walks: tuple[int, int],
-                    label: str | None = None) -> dict[str, Any]:
+                    label: str | None = None, station_id: str | None = None, return_direction: int | None = None) -> dict[str, Any]:
     """One shape for live and demo plans: Boston line info, both legs, the latest train back, and door-to-door minutes
     (setting out at start: walk to the stop, wait, ride, walk to the venue)."""
     total_min = math.ceil((out[1] - start).total_seconds() / 60) + walks[1]
@@ -812,7 +813,7 @@ def round_trip_plan(route_id: str, origin: str, destination: str, out: tuple[dat
             "line": line, "outbound": leg(origin, destination, out), "return": {**leg(destination, origin, back), "before_last_service": True},
             "total_min": total_min, "walk_to_stop_min": walks[0], "walk_from_stop_min": walks[1],
             # last_of_night: the search window reached the end of the MBTA service day, so this really is the last train back.
-            "last_return": {**leg(destination, origin, last), "last_of_night": last_of_night},
+            "last_return": {**leg(destination, origin, last), "last_of_night": last_of_night, "from_stop_id": station_id, "direction_id": return_direction},
             "label": label or ("Live departure and scheduled return" if live else "Scheduled round trip; prediction unavailable")}
 
 # Subway transfer stations (parent stops). Routes are looked up live, so branch changes don't need code edits.
@@ -968,7 +969,7 @@ async def assess_mbta_round_trip(q: QueryInput, venue: dict[str, Any], origin_st
                 return round_trip_plan(route_id, origin["name"], destination["name"],
                                        (origin_trips[out_id], destination_trips[out_id]), (venue_trips[ret_id], home_trips[ret_id]),
                                        (venue_trips[last_id], home_trips[last_id]), last_of_night, live_confirmed,
-                                       depart, (walk_to, walk_from))
+                                       depart, (walk_to, walk_from), station_id=destination["id"], return_direction=return_direction)
     # No single line works: try one change between subway lines.
     plan = await transfer_round_trip(q, venue, origin_stops, venue_stops, routes_by_stop, depart, return_after, return_before, last_of_night)
     return plan or {**NO_TRANSIT, "label": "No matching scheduled round trip; walking fallback"}
@@ -1311,6 +1312,10 @@ async def make_query(q: QueryInput) -> dict[str,Any]:
                            "reach_explanation":reach.get("label")})
     candidates.sort(key=lambda x:(-x["score"]["value"],x["venue"]["walk_min"]))  # ties (common in the OSM backup) go to the shorter walk
     candidates=candidates[:8]
+    # How late the last train's line ran recently at its station, same direction (Tiger Data); only once enough trains have left.
+    lasts=[last for c in candidates if (last:=c["reachability"].get("last_return")) and last.get("from_stop_id") and last.get("direction_id") is not None]
+    stats=await reliability.recent([(l["route"],l["from_stop_id"],l["direction_id"]) for l in lasts])
+    for l in lasts: l["reliability"]=stats.get((l["route"],l["from_stop_id"],l["direction_id"]))
     for c in candidates:
         c["explain_facts"]=explanation_facts(c)
     used=["google_places","mbta","nws","sports"]+(["overpass"] if backup else [])+(["routing"] if to_route else [])+(["gemini"] if q.free_text else [])+(["tiktok"] if prefs else [])
@@ -1326,9 +1331,9 @@ async def discover_boston_resources() -> None:
         await resolve_ckan_resources(force=True)
 
 @app.get("/api/health")
-def health() -> dict[str,Any]: return {"status":"ok", "neon": neon_status()}
+def health() -> dict[str,Any]: return {"status":"ok", "neon": neon_status(), "tiger": reliability.status()}
 # Per-visitor and site-wide sliding windows (requests per 60 s) on the endpoints that spend Google/Gemini/ORS/MBTA quota.
-RATE_LIMITS = {"/api/query": (30, 120), "/api/recommendations": (30, 120), "/api/explain": (30, 120)}
+RATE_LIMITS = {"/api/query": (30, 120), "/api/recommendations": (30, 120), "/api/explain": (30, 120), "/api/reliability": (30, 120)}
 _HITS: dict[tuple[str, str], deque[float]] = {}
 
 def client_key(request: Request) -> str:
@@ -1375,5 +1380,9 @@ async def neighborhood(lat:float=Query(ge=-90,le=90),lng:float=Query(ge=-180,le=
         result=await live_neighborhood(lat,lng,radius_m)
         return envelope(result,["boston_ckan"])
     return envelope({"center":{"lat":lat,"lng":lng},"radius_m":radius_m,"311":{"period_start":(datetime.now(timezone.utc)-timedelta(days=90)).date().isoformat(),"period_end":datetime.now(timezone.utc).date().isoformat(),"top_categories":[{"category":"Street cleaning","count":42},{"category":"Pothole","count":28},{"category":"Sidewalk repair","count":19}]},"business_licenses":[{"name":"Newbury Street Cafe","issued_at":(datetime.now(timezone.utc)-timedelta(days=12)).date().isoformat(),"lat":42.351,"lng":-71.071,"source_ref":"demo-license-001"}],"city_contacts":[{"name":"311 Boston","service":"City services and non-emergency requests","phone":"311","url":"https://www.boston.gov/departments/boston-311","distance_m":0,"source_ref":"demo-contact-311"}]},["boston_ckan"])
+@app.get("/api/reliability")
+async def train_reliability(route: str=Query(pattern=r"^[A-Za-z0-9-]{1,40}$"), stop: str=Query(pattern=r"^[A-Za-z0-9-]{1,40}$"), direction: int=Query(ge=0,le=1), hours: int=Query(reliability.WINDOW_H,ge=1,le=24)) -> dict[str,Any]:
+    stats=(await reliability.recent([(route,stop,direction)])).get((route,stop,direction)) if hours==reliability.WINDOW_H else None
+    return envelope({"route":route,"stop":stop,"direction":direction,"hours":hours,"min_trains":reliability.MIN_TRAINS,"recent":stats,"timeline":await reliability.timeline(route,stop,hours)},[])
 @app.get("/api/sources/health")
 def source_health() -> dict[str,Any]: return envelope({"sources":[HEALTH[s] for s in SOURCES]},[])

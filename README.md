@@ -38,6 +38,16 @@ Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api
 
 Register an app at [TikTok for Developers](https://developers.tiktok.com/), enable Login Kit + TikTok API with scopes `user.info.basic` and `video.list`, and set the redirect URI to your frontend-origin callback (local default `http://localhost:5173/api/tiktok/callback` so the Vite proxy sets the session cookie on the UI host). Set `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, and `TIKTOK_REDIRECT_URI`. In demo mode, **Connect TikTok** uses fixture taste tags without credentials. TikTok is never used for venue discovery.
 
+## Train reliability (Tiger Data)
+
+Cards add "ran 3 min late on average in the last 12 h (8 trains)" next to the last train back, from MBTA predictions recorded into a Tiger Data (TimescaleDB) hypertable.
+
+1. Create a Tiger Data service and run `backend/migrations/0003_train_reliability.sql` in its SQL editor (it calls `create_hypertable`).
+2. Set `TIGER_DATABASE_URL` (the service's `postgres://` connection string) in `.env` and on the Render API service.
+3. Keep the recorder running somewhere that stays on: `cd backend && ../.venv/bin/python -m app.reliability`. It makes one MBTA call a minute for 12 stations (`STATIONS` in `backend/app/reliability.py`).
+
+`GET /api/reliability?route=Red&stop=place-harsq&direction=1` returns the last 12 hours' average for that direction and a 15-minute `time_bucket` timeline (`hours=1..24`). Only trains that have left count (they dropped out of the MBTA feed), and cards show the average only after 5 of them, in the same direction as the last train back. Trips the MBTA runs without a schedule (for example "added" trips during a shuttle) are skipped, since there is no scheduled time to compare against.
+
 ## Deploy
 
 ### Docker (web UI and API)
