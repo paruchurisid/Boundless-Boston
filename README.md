@@ -1,8 +1,12 @@
-# Boundless Boston Navigator
+# T-Recs (Boundless Boston Navigator)
 
-**New here?** Read [CONTRIBUTING.md](CONTRIBUTING.md) for the design, workflow and current progress.
+A Boston night planner for students: places that are **open at your time, in budget, and reachable there and back**, by foot or by the T before the last train home. Every number shows where it came from (live, cached, demo or unavailable).
 
-A newcomer-facing Boston night planner. The app combines venue fit, walk estimates, transit context, weather, and neighborhood signals, while showing when information is demo, live, cached, or unavailable.
+**Live:** https://boundless-boston-web-5ze8.onrender.com · **API:** https://boundless-boston-api-5ze8.onrender.com
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to ship a change, and current progress.
+- [docs/DESIGN.md](docs/DESIGN.md): design choices and exactly how places are ranked.
+- [docs/SOURCES.md](docs/SOURCES.md) and [docs/architecture/](docs/architecture/): data sources and architecture.
 
 ## Run locally
 
@@ -22,99 +26,67 @@ pnpm install
 pnpm dev
 ```
 
-Open the Vite URL (normally `http://localhost:5173`). The frontend proxies `/api` to port 8000. The API docs are at `http://localhost:8000/docs`.
+Open `http://localhost:5173`. The frontend proxies `/api` to port 8000; API docs are at `http://localhost:8000/docs`.
 
-## Current implementation
+`APP_MODE=demo` (the default) uses clearly labeled fixtures and needs no keys. For live data, copy `.env.example` to `.env`, set `APP_MODE=live`, and add the keys you have. Live mode never substitutes demo fixtures: a missing key turns that source off, and without a Google key places come from the Neon catalog or the bundled OpenStreetMap snapshot. MBTA, the National Weather Service, Boston Open Data and the Red Sox/Bruins schedules need no key.
 
-- `backend/app/main.py`: FastAPI query, recommendations, neighborhood, and health endpoints; request validation; scoring; SQLite public response TTL cache; demo fixtures.
-- `backend/app/tiktok.py`: TikTok Login Kit OAuth + Display API taste preferences (personalization only).
-- `src/`: React/Vite UI with responsive search, saved places (`localStorage`), TikTok connect, score breakdowns, weather override, source status, and attribution presentation.
-- `scoring/weights.yaml`: declared scoring weights (includes `taste`).
-- `docs/architecture/` and `docs/SOURCES.md`: architecture and data handling decisions.
+| Variable | Used for |
+|---|---|
+| `GOOGLE_MAPS_API_KEY` | Places, ratings, hours, prices |
+| `MBTA_API_KEY` | Higher MBTA quota (works without one) |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Free-text search (rule-based fallback) and "Why this?" (template fallback) |
+| `ORS_API_KEY` | Street-routed walk times (straight-line estimate without it) |
+| `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI`, `TIKTOK_COOKIE_SECURE` | Optional TikTok taste tags (see below) |
+| `DATABASE_URL` (or `NEON_DATABASE_URL`) | Optional Neon catalog and saved runs |
+| `TIGER_DATABASE_URL` | Optional last-train reliability |
+| `BOSTON_311_PACKAGE`, `BOSTON_LICENSE_PACKAGE` | Override the Boston Open Data package slugs |
 
-`APP_MODE=demo` is the default and uses clearly labeled synthetic fixtures. Live mode is opt-in with `APP_MODE=live`. Live Tier 1 paths are implemented for Google Places, MBTA stops/routes/schedules/predictions/alerts, National Weather Service hourly forecasts, and Boston CKAN 311 and active food-establishment license data. Boston CKAN resource IDs are discovered dynamically with `package_show`. Transit eligibility uses paired scheduled trips, with prediction confirmation where available, or an explicitly approximate walking fallback. Google Places requires `GOOGLE_MAPS_API_KEY`; without it, live mode returns no Google candidates instead of substituting fixtures. Set `BOSTON_311_PACKAGE` and `BOSTON_LICENSE_PACKAGE` to override the CKAN package slugs.
+`.env.example` also lists `CORS_ORIGINS`, `CACHE_DB`, `TIKTOK_SESSION_DB` and `BOSTON_CKAN_URL`, with working defaults.
 
-### TikTok personalization (optional)
+**Tests:** `cd backend && ../.venv/bin/python -m pytest -q`, then `pnpm typecheck` and `pnpm build`. For the browser tests, run `pnpm exec playwright install chromium` once, then `pnpm e2e` (it uses `.venv/bin/python` unless `PYTHON` is set).
 
-Register an app at [TikTok for Developers](https://developers.tiktok.com/), enable Login Kit + TikTok API with scopes `user.info.basic` and `video.list`, and set the redirect URI to your frontend-origin callback (local default `http://localhost:5173/api/tiktok/callback` so the Vite proxy sets the session cookie on the UI host). Set `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, and `TIKTOK_REDIRECT_URI`. In demo mode, **Connect TikTok** uses fixture taste tags without credentials. TikTok is never used for venue discovery.
+## What's where
+
+- `backend/app/main.py`: FastAPI endpoints, validation, the search pipeline, MBTA round trips, scoring, caching and demo fixtures.
+- `backend/app/reliability.py`: Tiger Data recorder and reliability queries.
+- `backend/app/tiktok.py`: TikTok Login Kit and taste tags.
+- `backend/app/neon.py`: optional Neon catalog and run storage.
+- `src/`: React + Vite UI.
+- `features/college-atlas/`: the Map view.
+- `scoring/weights.yaml`: scoring weights and thresholds.
+
+## TikTok personalization (optional)
+
+TikTok only adds taste tags; it is never used to find venues. In demo mode, **Connect TikTok** uses fixture tags with no credentials.
+
+For a real account, register an app at [TikTok for Developers](https://developers.tiktok.com/), enable Login Kit and the TikTok API with scopes `user.info.basic` and `video.list`, and register the redirect URI on the frontend's origin, locally `http://localhost:5173/api/tiktok/callback` (through the Vite proxy, so the session cookie lands on the UI host). Set `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET` and `TIKTOK_REDIRECT_URI`, and `TIKTOK_COOKIE_SECURE=true` when serving over HTTPS.
 
 ## Train reliability (Tiger Data)
 
-Cards add "ran 3 min late on average in the last 12 h (8 trains)" next to the last train back, from MBTA predictions recorded into a Tiger Data (TimescaleDB) hypertable.
+Cards add "ran 3 min late on average in the last 12 h (8 trains)" next to the last train back.
 
 1. Create a Tiger Data service and run `backend/migrations/0003_train_reliability.sql` in its SQL editor (it calls `create_hypertable`).
-2. Set `TIGER_DATABASE_URL` (the service's `postgres://` connection string) in `.env` and on the Render API service.
-3. Keep the recorder running. On Render it runs inside the API when `RUN_RECORDER=1` (until `RECORDER_UNTIL`), and `.github/workflows/keep-awake.yml` pings the API every 5 minutes so the free plan doesn't sleep. Locally: `cd backend && ../.venv/bin/python -m app.reliability`. It makes one MBTA call a minute for 12 stations (`STATIONS` in `backend/app/reliability.py`); run only one recorder at a time.
+2. Set `TIGER_DATABASE_URL` in `.env` and on the Render API service.
+3. Run exactly one recorder. On Render it runs inside the API (`RUN_RECORDER=1` in `render.yaml`) until `RECORDER_UNTIL`. Locally: `cd backend && ../.venv/bin/python -m app.reliability`. It makes one MBTA call a minute for 12 stations.
 
-`GET /api/reliability?route=Red&stop=place-harsq&direction=1` returns the last 12 hours' average for that direction and a 15-minute `time_bucket` timeline (`hours=1..24`). Only trains that have left count (they dropped out of the MBTA feed), and cards show the average only after 5 of them, in the same direction as the last train back. Trips the MBTA runs without a schedule (for example "added" trips during a shuttle) are skipped, since there is no scheduled time to compare against.
+`GET /api/reliability?route=Red&stop=place-harsq&direction=1&hours=12` returns a 15-minute `time_bucket` timeline for `hours=1..24` (both directions), plus the card average for that direction when `hours=12`. Only trains that have left count, and cards show the average only after 5 of them. Trips with no schedule (for example during a shuttle) are skipped.
+
+Render's free plan sleeps after 15 idle minutes, which pauses the recorder. `.github/workflows/keep-awake.yml` pings the API, but GitHub runs scheduled jobs late or skips them, so expect gaps. Recording and pinging end on 2026-11-24 00:00 Boston time: to extend, change `RECORDER_UNTIL` (on Render and in `render.yaml`) and the date in `keep-awake.yml` together.
 
 ## Deploy
 
-### Docker (web UI and API)
+- **Render** (`render.yaml`): the API service `boundless-boston-api` (free web service, `APP_MODE=live`) and the static site `boundless-boston-web`, which rewrites `/api/*` to the API. They're served at the `-5ze8.onrender.com` URLs above. Keys go in the Render dashboard.
+- **Auto-deploy:** after every merge to `main`, once CI passes, `.github/workflows/ci.yml` calls the Render deploy hooks (repo secrets `RENDER_DEPLOY_HOOK_WEB` and `RENDER_DEPLOY_HOOK_API`) for that exact commit.
+- **Docker** (one container for UI and API):
 
-Requires Docker with Linux container support (Docker Desktop on Windows/macOS,
-or Docker Engine on Linux). No host Python or Node.js installation is needed.
-From the repository root:
+  ```sh
+  docker build -t boundless-boston .
+  docker run --rm -p 8000:8000 -v boundless-data:/app/.cache boundless-boston
+  ```
 
-```sh
-docker build -t boundless-boston .
-docker run --rm --name boundless-boston -p 8000:8000 -v boundless-data:/app/.cache boundless-boston
-```
+  Open `http://localhost:8000`. It defaults to demo mode; add `--env-file .env` for live keys. Set `CORS_ORIGINS` to the origin and `TIKTOK_REDIRECT_URI` to `<origin>/api/tiktok/callback`. The container runs as UID/GID 10001, so bind mounts must be writable by it; the volume keeps the cache and TikTok sessions. To change the port, set both `-e PORT=8080 -p 8080:8080` and update the origin and callback. Python runtime dependencies are in `dependencies.txt` (`backend/requirements.txt` adds pytest).
+- **Windows demo:** with the venv at `.venv`, `npm run demo` starts the API and UI in the background at `http://127.0.0.1:5173` and restarts them if they crash (`npm run demo:status`, `npm run demo:stop`; logs in `.cache/demo/`).
 
-Open `http://localhost:8000`; API docs are at `http://localhost:8000/docs`.
-The image defaults to demo mode, serves the compiled UI and API from one origin,
-runs as UID/GID 10001, and checks `/api/health` automatically. The named volume
-retains the response cache and TikTok sessions across container restarts. Bind
-mounts must be writable by UID 10001.
+## Neon (optional)
 
-For live providers, copy `.env.example` to `.env`, configure `APP_MODE=live`
-and provider keys, and add `--env-file .env` before the image name in the run
-command. Set `CORS_ORIGINS` to your web origin (locally `http://localhost:8000`)
-and `TIKTOK_REDIRECT_URI` to that origin plus `/api/tiktok/callback`. Register
-the same callback with TikTok; set `TIKTOK_COOKIE_SECURE=true` when serving over
-HTTPS. Use a reverse proxy or hosting platform for TLS. Secrets and local
-databases are excluded from the build context.
-
-`PORT` defaults to 8000. To change it, set both the environment variable and
-mapping, for example `-e PORT=8080 -p 8080:8080`, and update the origin/callback
-settings to match. Only Docker and network access for building and live
-providers are required; native Expo mobile builds remain separate.
-
-`dependencies.txt` contains Python runtime dependencies;
-`backend/requirements.txt` includes it plus pytest for development. Frontend
-dependencies use a frozen `pnpm-lock.yaml`. Base images support AMD64 and ARM64;
-publish both with a configured Buildx builder using
-`docker buildx build --platform linux/amd64,linux/arm64 -t YOUR_REGISTRY/boundless-boston --push .`.
-
-### Persistent local demo (Windows)
-
-After installing the Python and frontend dependencies and configuring `.env`,
-run `npm run demo` once. It starts the API and frontend in the background at
-http://127.0.0.1:5173 and returns when both are healthy. Repeating the command
-is safe. The supervisor restarts crashed processes and restarts services after
-three failed health checks following a 60-second startup grace period.
-Use `npm run demo:status` to check services and `npm run demo:stop` to stop them.
-Logs are in `.cache/demo/`. Processes survive closing the launching terminal;
-run the command again after rebooting or signing out of Windows.
-
-### Hosted services
-
-- **API:** Render, from `render.yaml` (free web service, `APP_MODE=live`). Set `GOOGLE_MAPS_API_KEY` and `MBTA_API_KEY` in the Render dashboard. The free plan sleeps when idle, so the first request after a pause can take about a minute.
-- **Frontend:** Render static site `boundless-boston-web` (also in `render.yaml`). A rewrite sends `/api/*` to `https://boundless-boston-api-5ze8.onrender.com`, so no CORS setup is needed.
-
-## Neon
-
-In live mode (`APP_MODE=live`), `/api/query` first reads nearby OpenStreetMap
-places from `public.catalog_venues` in Neon. Set the backend's `DATABASE_URL`
-to the pooled connection for the production branch containing that catalog,
-and install `backend/requirements.txt`. The frontend already calls this endpoint;
-database credentials stay on the server. `/api/health` includes `neon.catalog`
-after a search. Eligible places must have known opening hours that include the
-requested time. If the catalog is unavailable or yields no eligible candidates,
-discovery falls back to Google Places and then the bundled OSM snapshot.
-Demo mode continues to use fixtures. Redeploy the API after changing its code
-or environment; no frontend API URL change is required.
-
-`neon.ts` remains the Neon project configuration. The application API is FastAPI and needs a Python 3.12 runtime; it is not packaged as a Neon Function. Deploying the database/service requires a configured Neon project and a compatible Python hosting target. No credentials or deployment identifiers belong in the frontend bundle.
-
-Recommendation snapshots are persisted to Neon when the API has a `DATABASE_URL`. The application uses the pooled URL for request traffic; apply `backend/migrations/0002_recommendations.sql` with a direct connection when setting up another branch. Each `/api/query` response remains available if Neon is temporarily unavailable and includes a `storage` status for observability.
+With `DATABASE_URL` set in live mode, search first reads nearby OpenStreetMap places from `public.catalog_venues`, then falls back to Google Places and the bundled OSM snapshot. Recommendation runs are saved there too: use the pooled connection for the app, and a direct one to apply `backend/migrations/0002_recommendations.sql`. `/api/health` reports Neon's status. Without it, everything still works. `neon.ts` is the Neon project config.
